@@ -1,0 +1,21 @@
+# ────────────────────────── 기본 차단. ──────────────────────────
+
+# 백엔드 이미지 생성에 필요하지 않은 모든 파일을 기본적으로 제외한다.
+**
+
+
+# ────────────────────────── Gradle 빌드 파일. ──────────────────────────
+
+!backend/
+!backend/gradlew
+!backend/gradle/
+!backend/gradle/**
+!backend/build.gradle
+!backend/settings.gradle
+
+
+# ────────────────────────── 백엔드 실행 소스. ──────────────────────────
+
+!backend/src/
+!backend/src/main/
+!backend/src/main/**

@@ -12,6 +12,10 @@ import com.example.hangat.course.repository.CoursePresetRepository;
 import com.example.hangat.course.repository.CourseRepository;
 import com.example.hangat.domain.weather.WeatherService;
 import com.example.hangat.domain.weather.model.DailyWeather;
+import com.example.hangat.domain.weather.model.entity.WeatherForecast;
+import com.example.hangat.domain.weather.model.enums.PrecipitationType;
+import com.example.hangat.domain.weather.model.enums.WeatherGranularity;
+import com.example.hangat.domain.weather.repository.WeatherForecastRepository;
 import com.example.hangat.map.model.entity.CongestionForecast;
 import com.example.hangat.map.model.entity.DataSource;
 import com.example.hangat.map.model.entity.Place;
@@ -74,6 +78,7 @@ class SampleCourseBatchTest {
     @Autowired CongestionForecastRepository forecastRepository;
     @Autowired RegionRepository regionRepository;
     @Autowired PlaceCategoryRepository categoryRepository;
+    @Autowired WeatherForecastRepository weatherForecastRepository;
 
     @MockitoBean WeatherService weatherService;
 
@@ -208,6 +213,52 @@ class SampleCourseBatchTest {
             assertThat(i.getRecommendationScore()).isNull();          // 규칙 기반 - 점수를 지어내지 않는다
             assertThat(i.getVisitDate()).isEqualTo(출발일.plusDays(i.getDayNo() - 1));
         });
+    }
+
+    @Test
+    void 저장_시점_날씨_스냅숏은_그_권역_날짜의_최신_발표분을_가리키고_없으면_null이다() {
+        DataSource kmaShort = em.find(DataSource.class, "KMA_SHORT");
+        if (kmaShort == null) {
+            kmaShort = DataSource.builder()
+                    .code("KMA_SHORT").displayName("기상청 단기예보")
+                    .providerName("기상청").attributionText("기상청")
+                    .displayOrder((short) 6).isActive(true)
+                    .build();
+            em.persist(kmaShort);
+        }
+        Region south = regionRepository.findByCode("SOUTH").orElseThrow();
+        LocalDateTime 어제발표 = LocalDateTime.of(2026, 9, 3, 20, 0);
+        LocalDateTime 오늘발표 = LocalDateTime.of(2026, 9, 4, 20, 0);
+        for (int day = 0; day < 3; day++) {
+            weatherForecastRepository.save(WeatherForecast.daily(south, kmaShort,
+                    PlaceNameNormalizer.jejuDayToUtc(출발일.plusDays(day)), 오늘발표,
+                    "맑음", PrecipitationType.NONE, 22, 28, 10));
+        }
+        weatherForecastRepository.save(WeatherForecast.daily(south, kmaShort,
+                PlaceNameNormalizer.jejuDayToUtc(출발일), 어제발표, "비", PrecipitationType.RAIN, 20, 25, 80));
+        em.flush();
+
+        generator.generate(출발일);
+
+        List<CourseItem> 남부 = itemRepository.findItemsWithPlace(courseByTitle("남부 여유 2박 3일").getId());
+        assertThat(남부).hasSize(9).allSatisfy(i -> {
+            assertThat(i.getPlannedWeatherForecast()).isNotNull();
+            assertThat(i.getPlannedWeatherForecast().getRegion().getCode()).isEqualTo("SOUTH");
+            assertThat(i.getPlannedWeatherForecast().getForecastAt())
+                    .isEqualTo(PlaceNameNormalizer.jejuDayToUtc(i.getVisitDate()));
+            assertThat(i.getPlannedWeatherForecast().getBaseAt()).isEqualTo(오늘발표);   // 어제 발표분이 아니라 최신
+        });
+        // 예보가 없는 권역은 지어내지 않는다 - '날씨 정보 없음'
+        List<CourseItem> 동부 = itemRepository.findItemsWithPlace(courseByTitle("동부 한산 2박 3일").getId());
+        assertThat(동부).isNotEmpty().allSatisfy(i -> assertThat(i.getPlannedWeatherForecast()).isNull());
+
+        // 발표 버전을 지워도(수동 정리) 코스가 막지 않고 스냅숏만 '정보 없음'으로 돌아간다 - ON DELETE SET NULL
+        // (혼잡 스냅숏의 CourseDomainTest와 같은 규칙. 적재는 삭제 대신 값 갱신이라 평소엔 일어나지 않는다)
+        weatherForecastRepository.deleteVersion(오늘발표, WeatherGranularity.DAILY);
+        em.flush();
+        em.clear();
+        List<CourseItem> 남부_이후 = itemRepository.findItemsWithPlace(courseByTitle("남부 여유 2박 3일").getId());
+        assertThat(남부_이후).hasSize(9).allSatisfy(i -> assertThat(i.getPlannedWeatherForecast()).isNull());
     }
 
     @Test

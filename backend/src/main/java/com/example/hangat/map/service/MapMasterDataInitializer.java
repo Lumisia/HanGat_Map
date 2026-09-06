@@ -39,6 +39,18 @@ public class MapMasterDataInitializer implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(MapMasterDataInitializer.class);
 
+    /** 권역 시드 - 중심 좌표(KTO 2,147건 분류 후 실측 중앙값)와 기상청 단기예보 격자(변환식 계산값). */
+    private record RegionSeed(String code, String name, String lat, String lng, byte order,
+                              short gridX, short gridY) {
+    }
+
+    private static final List<RegionSeed> REGION_SEEDS = List.of(
+            new RegionSeed("NORTH", "북부", "33.4950010", "126.5169050", (byte) 1, (short) 52, (short) 38),
+            new RegionSeed("EAST", "동부", "33.4592800", "126.7843930", (byte) 2, (short) 57, (short) 37),
+            new RegionSeed("SOUTH", "남부", "33.2487280", "126.5142330", (byte) 3, (short) 52, (short) 32),
+            new RegionSeed("WEST", "서부", "33.3434170", "126.3124120", (byte) 4, (short) 49, (short) 35)
+    );
+
     private final RegionRepository regionRepository;
     private final PlaceCategoryRepository categoryRepository;
     private final DataSourceRepository dataSourceRepository;
@@ -66,20 +78,32 @@ public class MapMasterDataInitializer implements ApplicationRunner {
      * <p>{@code centerLat/Lng}는 KTO 제주 2,147건을 그 규칙으로 분류한 뒤 구한 <b>실측 중앙값</b>이다
      * (2026-08-23). 평균이 아니라 중앙값을 쓴 이유 - 동부는 조천~성산 폭이 넓어 평균이 서쪽으로 끌린다.
      *
-     * <p>{@code kmaGrid}는 null로 둔다. 기상청 격자는 날씨 담당(jdh) 몫이고 현재 구현은 제주 전역을
-     * 단일 격자로 처리한다. <b>검증 안 된 값을 넣지 않는다</b>(§1.2).
+     * <p>{@code kmaGrid}는 권역 중심 좌표를 기상청 단기예보 격자 변환식(LCC, 5km 격자)에 넣어 구한 값이다
+     * (2026-09-03, 날씨 담당 jdh). 북부 52/38이 그전까지 제주 전역 단일 격자로 쓰던 상수와 같아 교차 검증됐다.
+     * 권역이 먼저 들어간 DB(운영)에는 격자만 비어 있으므로 <b>행은 두되 격자가 비면 채운다</b>.
      */
     private void initRegions() {
-        if (regionRepository.count() > 0) {
+        if (regionRepository.count() == 0) {
+            regionRepository.saveAll(REGION_SEEDS.stream().map(this::region).toList());
+            log.info("권역 마스터 {}행 적재", REGION_SEEDS.size());
             return;
         }
-        regionRepository.saveAll(List.of(
-                region("NORTH", "북부", "33.4950010", "126.5169050", (byte) 1),
-                region("EAST", "동부", "33.4592800", "126.7843930", (byte) 2),
-                region("SOUTH", "남부", "33.2487280", "126.5142330", (byte) 3),
-                region("WEST", "서부", "33.3434170", "126.3124120", (byte) 4)
-        ));
-        log.info("권역 마스터 4행 적재");
+        long filled = 0;
+        for (Region region : regionRepository.findAll()) {
+            if (region.getKmaGridX() != null && region.getKmaGridY() != null) {
+                continue;
+            }
+            REGION_SEEDS.stream()
+                    .filter(seed -> seed.code().equals(region.getCode()))
+                    .findFirst()
+                    .ifPresent(seed -> region.assignKmaGrid(seed.gridX(), seed.gridY()));
+            if (region.getKmaGridX() != null) {
+                filled++;
+            }
+        }
+        if (filled > 0) {
+            log.info("권역 기상청 격자 {}행 보강", filled);
+        }
     }
 
     /**
@@ -168,6 +192,30 @@ public class MapMasterDataInitializer implements ApplicationRunner {
                         .apiUrl("https://developers.kakao.com/docs/latest/ko/local/dev-guide")
                         .attributionText("출처: 카카오 로컬")
                         .displayOrder((short) 5)
+                        .build(),
+                DataSource.builder()
+                        .code("KMA_SHORT")
+                        .displayName("기상청 단기예보")
+                        .providerName("기상청")
+                        .homepageUrl("https://www.kma.go.kr")
+                        .apiUrl("https://www.data.go.kr/data/15084084/openapi.do")
+                        .licenseName("공공누리 제1유형")
+                        .licenseUrl("https://www.kogl.or.kr/info/license.do")
+                        .attributionText("출처: 기상청 단기예보 조회서비스")
+                        .disclaimerText("날씨는 기상청 예보이며 발표 시각 이후 바뀔 수 있습니다. 권역 대표 격자 기준입니다.")
+                        .displayOrder((short) 6)
+                        .build(),
+                DataSource.builder()
+                        .code("KMA_MID")
+                        .displayName("기상청 중기예보")
+                        .providerName("기상청")
+                        .homepageUrl("https://www.kma.go.kr")
+                        .apiUrl("https://www.data.go.kr/data/15059468/openapi.do")
+                        .licenseName("공공누리 제1유형")
+                        .licenseUrl("https://www.kogl.or.kr/info/license.do")
+                        .attributionText("출처: 기상청 중기예보 조회서비스")
+                        .disclaimerText("중기예보는 제주도 전역 단위라 권역별 차이를 담지 않습니다. 발표 시각 이후 바뀔 수 있습니다.")
+                        .displayOrder((short) 7)
                         .build()
         );
         long inserted = requiredSources.stream()
@@ -179,13 +227,15 @@ public class MapMasterDataInitializer implements ApplicationRunner {
         }
     }
 
-    private Region region(String code, String name, String lat, String lng, byte order) {
+    private Region region(RegionSeed seed) {
         return Region.builder()
-                .code(code)
-                .name(name)
-                .centerLat(new BigDecimal(lat))
-                .centerLng(new BigDecimal(lng))
-                .displayOrder(order)
+                .code(seed.code())
+                .name(seed.name())
+                .centerLat(new BigDecimal(seed.lat()))
+                .centerLng(new BigDecimal(seed.lng()))
+                .kmaGridX(seed.gridX())
+                .kmaGridY(seed.gridY())
+                .displayOrder(seed.order())
                 .build();
     }
 

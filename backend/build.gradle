@@ -33,9 +33,14 @@ dependencies {
     // .env 로딩 (로컬 개발용 - 배포 환경은 실제 환경변수 사용)
     implementation 'io.github.cdimascio:dotenv-java:3.0.0'
 
-    // --- DB ---
+    // DB관련 의존성
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    implementation 'org.mariadb.jdbc:mariadb-java-client:3.4.1'
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+
+    implementation 'org.flywaydb:flyway-core'
+    runtimeOnly 'org.flywaydb:flyway-mysql'
+
+    runtimeOnly 'org.mariadb.jdbc:mariadb-java-client:3.4.1'
 
     // --- Security + JWT (Nexus와 동일 - 필터 구현은 회원 담당) ---
     implementation 'org.springframework.boot:spring-boot-starter-security'
@@ -59,6 +64,11 @@ dependencies {
 
     // OAuth 추가
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-client'
+
+    // minio 추가
+    implementation 'io.minio:minio:9.0.3'
+    // ImageIO 기본 리더가 지원하지 않는 WebP 파일 검증
+    runtimeOnly 'com.twelvemonkeys.imageio:imageio-webp:3.13.1'
 }
 
 bootJar {

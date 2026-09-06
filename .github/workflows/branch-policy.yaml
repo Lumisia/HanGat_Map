@@ -1,0 +1,65 @@
+name: Branch Policy
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+
+permissions:
+  contents: read
+
+jobs:
+  branch-policy:
+    name: branch-policy
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 2
+
+    steps:
+      - name: PR 출발 브랜치 검사
+        shell: bash
+
+        env:
+          BASE_BRANCH: ${{ github.base_ref }}
+          HEAD_BRANCH: ${{ github.head_ref }}
+
+        run: |
+          set -euo pipefail
+
+          echo "출발 브랜치: ${HEAD_BRANCH}"
+          echo "대상 브랜치: ${BASE_BRANCH}"
+
+          # ────────────────────────── dev 정책 ──────────────────────────
+
+          if [[ "${BASE_BRANCH}" == "dev" ]]; then
+            if [[ ! "${HEAD_BRANCH}" =~ ^(feat|fix|refactor|docs|test|chore|ci|build|perf|style)/.+$ ]]; then
+              echo "::error title=허용되지 않은 dev PR::dev에는 feat/*, fix/*, refactor/*, docs/*, test/*, chore/*, ci/*, build/*, perf/*, style/* 브랜치만 병합할 수 있습니다."
+              exit 1
+            fi
+
+            echo "dev 브랜치 정책을 통과했습니다."
+            exit 0
+          fi
+
+          # ────────────────────────── main 정책 ──────────────────────────
+
+          if [[ "${BASE_BRANCH}" == "main" ]]; then
+            if [[ "${HEAD_BRANCH}" != "dev" && ! "${HEAD_BRANCH}" =~ ^fix/.+$ ]]; then
+              echo "::error title=허용되지 않은 main PR::main에는 dev 또는 fix/* 브랜치만 병합할 수 있습니다."
+              exit 1
+            fi
+
+            echo "main 브랜치 정책을 통과했습니다."
+            exit 0
+          fi
+
+          echo "::error title=알 수 없는 대상 브랜치::지원하지 않는 대상 브랜치입니다: ${BASE_BRANCH}"
+          exit 1

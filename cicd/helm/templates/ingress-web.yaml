@@ -1,0 +1,56 @@
+{{- if .Values.ingress.enabled }}
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+
+metadata:
+  name: {{ include "hangat.fullname" . }}-web
+  namespace: {{ .Release.Namespace }}
+
+  labels:
+    {{- include "hangat.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: {{ .Values.ingress.forceSslRedirect | quote }}
+    nginx.ingress.kubernetes.io/force-ssl-redirect: {{ .Values.ingress.forceSslRedirect | quote }}
+
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.web.host | quote }}
+
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+
+  rules:
+    - host: {{ .Values.ingress.web.host | quote }}
+
+      http:
+        paths:
+          # 후기 이미지 URL은 현재 상대 경로이므로 대표 도메인에서도 제공한다.
+          - path: /uploads
+            pathType: Prefix
+
+            backend:
+              service:
+                name: {{ include "hangat.fullname" . }}-backend
+
+                port:
+                  number: {{ .Values.backend.service.port }}
+
+          # Vue 정적 파일과 SPA fallback
+          - path: /
+            pathType: Prefix
+
+            backend:
+              service:
+                name: {{ include "hangat.fullname" . }}-frontend
+
+                port:
+                  number: {{ .Values.frontend.service.port }}
+
+{{- end }}

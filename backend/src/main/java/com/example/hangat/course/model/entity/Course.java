@@ -4,6 +4,7 @@ import com.example.hangat.course.model.enums.CourseStatus;
 import com.example.hangat.course.model.enums.CourseType;
 import com.example.hangat.course.model.enums.GenerationReason;
 import com.example.hangat.course.model.enums.Transport;
+import com.example.hangat.map.model.entity.PlaceSourceMapping;
 import com.example.hangat.user.model.User;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -49,7 +50,10 @@ import java.time.LocalDateTime;
                 // 저장 코스 목록(MY_001): where user_id=? and status='SAVED' order by saved_at desc
                 @Index(name = "idx_courses_user_status_saved", columnList = "user_id, status, saved_at"),
                 // 메인 샘플 조회: where course_type='SAMPLE' and status='READY'
-                @Index(name = "idx_courses_type_status", columnList = "course_type, status")
+                @Index(name = "idx_courses_type_status", columnList = "course_type, status"),
+                @Index(
+                        name = "idx_courses_accommodation_source_mapping",
+                        columnList = "accommodation_source_mapping_id")
         }
 )
 @Getter
@@ -77,6 +81,14 @@ public class Course {
     @JoinColumn(name = "preset_id", foreignKey = @ForeignKey(name = "fk_courses_preset"))
     @OnDelete(action = OnDeleteAction.SET_NULL)   // 명세서: ON DELETE SET NULL - 프리셋이 내려가도 코스는 남는다
     private CoursePreset preset;
+
+    /** 사용자가 선택한 숙소의 외부 출처 identity. 기존 코스와 미선택 코스는 NULL. */
+    @ManyToOne(fetch = FetchType.LAZY, optional = true)
+    @JoinColumn(
+            name = "accommodation_source_mapping_id",
+            nullable = true,
+            foreignKey = @ForeignKey(name = "fk_courses_accommodation_source_mapping"))
+    private PlaceSourceMapping accommodationSourceMapping;
 
     /** SAMPLE이면 preset·title 필수, userId는 NULL(명세서 CHECK - 앱 검증). */
     @Enumerated(EnumType.STRING)
@@ -224,6 +236,11 @@ public class Course {
     /** 마이페이지 코스명 수정. 길이·공백 검증은 요청 DTO에서. */
     public void rename(String title) {
         this.title = title;
+    }
+
+    /** 숙소 변경은 코스 일정이나 장소 매핑을 건드리지 않고 FK만 교체한다. */
+    public void changeAccommodation(PlaceSourceMapping accommodationSourceMapping) {
+        this.accommodationSourceMapping = accommodationSourceMapping;
     }
 
     /** 논리 삭제(MY_002). deleted_at과 상태를 함께 - 명세서 CHECK가 짝을 요구한다. 멱등 호출 허용. */

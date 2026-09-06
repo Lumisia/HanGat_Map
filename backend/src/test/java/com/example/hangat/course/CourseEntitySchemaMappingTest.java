@@ -46,6 +46,20 @@ class CourseEntitySchemaMappingTest {
                     null,
                     null);
             assertColumn(connection, "courses", "people", Types.SMALLINT, false, null, null);
+            assertColumn(
+                    connection,
+                    "courses",
+                    "accommodation_source_mapping_id",
+                    Types.BIGINT,
+                    true,
+                    null,
+                    null);
+            assertForeignKey(
+                    connection,
+                    "courses",
+                    "accommodation_source_mapping_id",
+                    "place_source_mappings",
+                    "id");
             assertColumn(connection, "course_items", "day_no", Types.SMALLINT, false, null, null);
             assertColumn(connection, "course_items", "position", Types.SMALLINT, false, null, null);
             assertColumn(
@@ -64,6 +78,32 @@ class CourseEntitySchemaMappingTest {
                     true,
                     8,
                     4);
+        }
+    }
+
+    private void assertForeignKey(
+            Connection connection,
+            String tableName,
+            String columnName,
+            String referencedTable,
+            String referencedColumn
+    ) throws Exception {
+        DatabaseMetaData metadata = connection.getMetaData();
+        try (ResultSet keys = metadata.getImportedKeys(
+                connection.getCatalog(), null, tableName.toUpperCase())) {
+            boolean found = false;
+            while (keys.next()) {
+                if (columnName.equalsIgnoreCase(keys.getString("FKCOLUMN_NAME"))
+                        && referencedTable.equalsIgnoreCase(keys.getString("PKTABLE_NAME"))
+                        && referencedColumn.equalsIgnoreCase(keys.getString("PKCOLUMN_NAME"))) {
+                    found = true;
+                    break;
+                }
+            }
+            assertThat(found)
+                    .as("foreign key %s.%s -> %s.%s",
+                            tableName, columnName, referencedTable, referencedColumn)
+                    .isTrue();
         }
     }
 

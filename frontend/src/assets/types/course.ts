@@ -82,13 +82,33 @@ export interface CourseDay {
   accommodation_departure_distance_m?: number; accommodation_departure_travel_minutes?: number
   accommodation_return_distance_m?: number; accommodation_return_travel_minutes?: number
 }
+export interface CarRouteCoordinate { latitude: number; longitude: number }
+export interface CarRouteAccessPoint {
+  original_place_id: number; original_place_name: string; type: 'PLACE_ENTRANCE' | 'PARKING'
+  name: string; latitude: number; longitude: number; straight_distance_meters: number
+  source_code: 'KAKAO_LOCAL'; source_place_id: string; notice: string
+}
+export interface CarRouteStop { type: 'COURSE_ITEM' | 'ACCOMMODATION'; id: string; name: string; access_point?: CarRouteAccessPoint | null }
+export interface CarRouteLeg {
+  from: CarRouteStop; to: CarRouteStop; distance_meters: number | null; duration_seconds: number | null
+  polyline: CarRouteCoordinate[]
+}
+export interface CarDayRoute {
+  day_no: number; visit_date: string; total_distance_meters?: number | null; total_duration_seconds?: number | null
+  legs: CarRouteLeg[]; polyline: CarRouteCoordinate[]
+}
+export interface CarRouteResult {
+  course_id: number; transport: 'RENTAL_CAR'; provider: 'KAKAO_MOBILITY'; priority: 'RECOMMEND'
+  cached: boolean; fetched_at: string; days: CarDayRoute[]
+}
 export interface CourseResult {
   id: number; course_type: CourseType; generation_reason: GenerationReason; status: CourseStatus; title?: string
   claim_token?: string; claim_expires_at?: string
   start_date: string; end_date: string; people: number; budget_total?: number; transport: Transport
   estimated_cost_min?: number; estimated_cost_max?: number; average_congestion_rate?: number
   cost_summary?: CourseCostSummary; budget_summary?: CourseBudgetSummary
-  generation_error_code?: string; accommodation?: AccommodationInput; days: CourseDay[]
+  generation_error_code?: string; accommodation?: AccommodationInput | null; days: CourseDay[]
+  car_route?: CarRouteResult
 }
 export interface AlternativePlace {
   place_id: number; place_name: string; category_name: string; subcategory_name?: string; image_url?: string

@@ -49,6 +49,10 @@ public record PlaceIntroItem(
         // ── 39 음식점 ──
         String opentimefood,
         String restdatefood,
-        String parkingfood
+        String parkingfood,
+        /** 대표 메뉴. 가격은 없다 - KTO가 메뉴명만 준다 */
+        String firstmenu,
+        /** 취급 메뉴. ","나 "/"로 여러 개가 온다 */
+        String treatmenu
 ) {
 }

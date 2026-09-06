@@ -6,12 +6,15 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CongestionBadge from '../../components/common/CongestionBadge.vue'
 import MapRenderer from '../../components/map/MapRenderer.vue'
+import AlternativePlaceModal from '../../components/course/AlternativePlaceModal.vue'
+import { ApiError } from '../../api/errors.js'
 import { sampleCourses } from '../../data/courses'
 import { levelLabel, places } from '../../data/data'
 import { levelOf } from '../../utils/congestion'
 import { resolveCourseDetail } from './courseDetailModel'
-import CourseService, { type CourseDetail } from '../../services/CourseService'
+import CourseService, { type CourseDetail, type CourseDetailItem } from '../../services/CourseService'
 import type { CongestionLevel, Place } from '../../assets/types'
+import type { AlternativePlace, CourseItem } from '../../assets/types/course'
 
 const route = useRoute()
 const router = useRouter()
@@ -20,6 +23,15 @@ const editing = ref(false)
 const shared = ref(false)
 const live = ref<CourseDetail | null>(null)
 const loading = ref(true)
+
+// 장소 교체(#과밀지역 우회) - AI 코스 화면과 같은 대안 모달·같은 API를 쓴다
+const swapTarget = ref<Stop | null>(null)
+const alternatives = ref<AlternativePlace[]>([])
+const altLoading = ref(false)
+const altNotice = ref('')
+const swapping = ref(false)
+const toast = ref('')
+let toastTimer: ReturnType<typeof setTimeout> | undefined
 
 onMounted(async () => {
   live.value = await CourseService.getCourseDetail(courseId)
@@ -36,6 +48,10 @@ interface Stop {
   level: CongestionLevel | null
   /** 장소 상세가 아직 목업 id 라우팅이라, 실데이터 일정은 링크를 걸지 않는다 */
   detailPath: string | null
+  /** 실데이터 일정만 - 장소 교체가 백엔드 item id·날짜를 알아야 한다. 목업은 교체 불가 */
+  liveItem: CourseDetailItem | null
+  dayNo: number | null
+  visitDate: string | null
 }
 
 interface CourseView {
@@ -103,6 +119,9 @@ const fromLive = (course: CourseDetail): CourseView => {
         metaLabel: [move, swapped ?? item.reason].filter(Boolean).join(' · '),
         level: item.congestionLevel,
         detailPath: null,
+        liveItem: item,
+        dayNo: day.dayNo,
+        visitDate: day.visitDate,
       }
     }),
   }))
@@ -157,6 +176,9 @@ const fromMock = (course: NonNullable<typeof mock.value>): CourseView => {
         metaLabel: `${place.stay} · ${place.cost}`,
         level: place.level,
         detailPath: `/places/${place.id}`,
+        liveItem: null,
+        dayNo: null,
+        visitDate: null,
       })),
     })),
     mapPlaces: stops,
@@ -170,6 +192,86 @@ const view = computed<CourseView | null>(() => {
   if (mock.value) return fromMock(mock.value)
   return null
 })
+
+/** 대안 모달은 AI 코스 화면의 CourseItem 모양을 받는다 - 상세 응답에서 그 모양으로 옮긴다(없는 값은 비운다) */
+const modalItem = computed<CourseItem | null>(() => {
+  const stop = swapTarget.value
+  if (!stop?.liveItem || !live.value) return null
+  const item = stop.liveItem
+  return {
+    id: item.id,
+    course_id: Number(live.value.id),
+    place_id: item.placeId,
+    place_name: item.placeName,
+    category_name: item.categoryName,
+    image_url: item.imageUrl ?? undefined,
+    day_no: stop.dayNo ?? 1,
+    position: item.position,
+    visit_date: stop.visitDate ?? live.value.startDate,
+    start_time: item.startTime ?? undefined,
+    item_source: item.replacedFromPlaceName ? 'REPLACEMENT' : 'AI_RECOMMENDED',
+    inbound_distance_m: item.inboundDistanceM ?? undefined,
+    inbound_travel_minutes: item.inboundTravelMinutes ?? undefined,
+    congestion_rate: item.congestionRate ?? undefined,
+    congestion_level: item.congestionLevel ?? undefined,
+    recommendation_reason: item.reason ?? undefined,
+    costs: [],
+  }
+})
+
+const showToast = (text: string) => {
+  toast.value = text
+  if (toastTimer) clearTimeout(toastTimer)   // 연달아 뜨면 앞 타이머가 새 토스트를 지운다
+  toastTimer = setTimeout(() => { toast.value = '' }, 2600)
+}
+
+async function openSwap (stop: Stop) {
+  if (!stop.liveItem || !stop.visitDate || !live.value) return
+  swapTarget.value = stop
+  alternatives.value = []
+  altNotice.value = ''
+  altLoading.value = true
+  const exclude = live.value.days.flatMap(day => day.items)
+    .filter(item => item.id !== stop.liveItem?.id)
+    .map(item => item.placeId)
+  try {
+    alternatives.value = await CourseService.getAlternatives(stop.liveItem.placeId, stop.visitDate, exclude)
+  } catch (failure) {
+    // 3401 = 그 날짜 혼잡 예보 없음 - 빈 목록으로 뭉개지 않고 이유를 보여준다(정직성)
+    altNotice.value = failure instanceof ApiError && Number(failure.code) === 3401
+      ? '이 날짜의 혼잡 예보가 아직 없어 대안을 고를 수 없어요.'
+      : '대안을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.'
+  } finally {
+    altLoading.value = false
+  }
+}
+
+async function applySwap (alternative: AlternativePlace) {
+  const target = swapTarget.value?.liveItem
+  if (!target || !live.value || swapping.value) return   // 더블클릭이면 두 번째 스왑이 첫 교체를 '원래 장소'로 덮는다
+  swapping.value = true
+  altNotice.value = ''
+  try {
+    const summary = await CourseService.swapItem(courseId, target.id, alternative.place_id, live.value.manageable)
+    // 서버가 교체 칸과 다음 칸 이동, 평균을 다시 계산했으니 상세를 다시 읽는다 - 로컬에서 흉내 내지 않는다
+    const refreshed = await CourseService.getCourseDetail(courseId)
+    swapTarget.value = null
+    if (refreshed) {
+      live.value = refreshed
+      showToast(summary.levelLabel
+        ? `${alternative.place_name}(으)로 바꿨어요. 평균 혼잡도는 ${summary.levelLabel}이에요.`
+        : `${alternative.place_name}(으)로 바꿨어요.`)
+    } else {
+      // 교체는 됐는데 재조회가 실패 - 화면을 비우지 않고 알린다
+      showToast(`${alternative.place_name}(으)로 바꿨지만 최신 일정을 불러오지 못했어요. 새로고침해 주세요.`)
+    }
+  } catch (failure) {
+    // 서버 메시지(중복 장소·권한·예보 없음)는 모달 안에 - 토스트는 모달 뒤에 가려진다
+    altNotice.value = failure instanceof ApiError ? `바꾸지 못했어요. ${failure.message}` : '장소를 바꾸지 못했어요. 기존 일정은 그대로예요.'
+  } finally {
+    swapping.value = false
+  }
+}
 </script>
 
 <template>
@@ -289,7 +391,13 @@ const view = computed<CourseView | null>(() => {
                   class="edit-actions"
                 >
                   <button>시간 변경</button>
-                  <button>장소 교체</button>
+                  <!-- 목업 코스는 서버 item id가 없어 교체 불가 -->
+                  <button
+                    :disabled="!stop.liveItem"
+                    @click="openSwap(stop)"
+                  >
+                    장소 교체
+                  </button>
                 </div>
               </div>
             </div>
@@ -335,6 +443,24 @@ const view = computed<CourseView | null>(() => {
       </RouterLink>
     </div>
   </section>
+
+  <!-- v-if/v-else 형제 체인 뒤에 둔다 - 사이에 끼우면 v-else가 끊긴다 -->
+  <AlternativePlaceModal
+    v-if="modalItem"
+    :item="modalItem"
+    :alternatives="alternatives"
+    :loading="altLoading"
+    :notice="altNotice"
+    :busy="swapping"
+    @close="swapTarget = null"
+    @select="applySwap"
+  />
+  <div
+    v-if="toast"
+    class="toast"
+  >
+    {{ toast }}
+  </div>
 </template>
 
 <style scoped>

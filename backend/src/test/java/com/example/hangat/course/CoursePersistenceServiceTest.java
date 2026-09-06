@@ -45,7 +45,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DataJpaTest
-@Import(CoursePersistenceService.class)
+@Import({CoursePersistenceService.class, CoursePlaceResolver.class})
 @ActiveProfiles("test")
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class CoursePersistenceServiceTest {
@@ -128,7 +128,7 @@ class CoursePersistenceServiceTest {
         assertThat(item.getInboundDistanceM()).isNull();
         assertThat(item.getInboundTravelMinutes()).isNull();
         assertThat(item.getPlannedCongestionForecast()).isNull();
-        assertThat(item.getPlannedWeatherForecastId()).isNull();
+        assertThat(item.getPlannedWeatherForecast()).isNull();
         assertThat(item.getRecommendationScore()).isNull();
         assertThat(item.getRecommendationReasonCode()).isNull();
         assertThat(mappingRepository.findBySourceCodeAndSourcePlaceId("KTO", "1001"))

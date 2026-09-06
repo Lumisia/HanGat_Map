@@ -1,5 +1,4 @@
 import type { KakaoPlaceSearchResult } from '../assets/types/course'
-import { mockAccommodations } from './accommodationMockService'
 import { loadKakaoMap } from './map/KakaoMapLoader'
 import { mapKakaoPlaceSearchResult, type KakaoPlaceSearchDocument } from './map/KakaoPlaceSearchMapper'
 
@@ -76,8 +75,8 @@ async function searchKakaoPlaces(query: string, mode: KakaoPlaceSearchMode, page
   })
 }
 
-function searchMockPlaces(query: string, mode: KakaoPlaceSearchMode, page: number): KakaoPlaceSearchPage {
-  const source = mode === 'ACCOMMODATION' ? mockAccommodations : mockGeneralPlaces
+function searchMockPlaces(query: string, page: number): KakaoPlaceSearchPage {
+  const source = mockGeneralPlaces
   const normalizedQuery = normalize(query)
   const matches = source.filter(item => normalize(`${item.place_name}${item.address ?? ''}`).includes(normalizedQuery))
   const lastPage = Math.max(1, Math.ceil(matches.length / PAGE_SIZE))
@@ -90,11 +89,12 @@ export const kakaoPlaceSearchService = {
   async search(query: string, options: { mode: KakaoPlaceSearchMode; page?: number }): Promise<KakaoPlaceSearchPage> {
     const clean = query.trim()
     const page = options.page ?? 1
-    if (clean.length < 2) return { items: [], current_page: 1, last_page: 1, total_count: 0, source: 'MOCK' }
+    if (clean.length < 2) return { items: [], current_page: 1, last_page: 1, total_count: 0, source: 'KAKAO' }
     try {
       return await searchKakaoPlaces(clean, options.mode, page)
-    } catch {
-      return searchMockPlaces(clean, options.mode, page)
+    } catch (error) {
+      if (options.mode === 'ACCOMMODATION') throw error
+      return searchMockPlaces(clean, page)
     }
   },
 }

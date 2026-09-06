@@ -63,7 +63,11 @@ public enum BaseResponseStatus {
     // 5000번대 서버 오류
     FAIL(false, 5000, "요청 실패"),
     DATABASE_ERROR(false, 5001, "데이터베이스 연결 및 처리 오류"),
-    EXTERNAL_API_ERROR(false, 5002, "외부 API 호출에 실패했습니다.");
+    EXTERNAL_API_ERROR(false, 5002, "외부 API 호출에 실패했습니다."),
+    AI_COURSE_TEMPORARILY_UNAVAILABLE(
+            false,
+            5003,
+            "AI 코스 생성 서버가 일시적으로 혼잡합니다. 잠시 후 다시 시도해 주세요.");
 
     private final boolean success;
     private final int code;

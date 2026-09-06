@@ -1,0 +1,32 @@
+{{- if and .Values.backend.persistence.enabled
+           (not .Values.backend.persistence.existingClaim) }}
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+
+metadata:
+  name: {{ include "hangat.backendPvcName" . }}
+  namespace: {{ .Release.Namespace }}
+
+  # Helm release를 삭제해도 후기 사진 PVC는 보존한다.
+  annotations:
+    helm.sh/resource-policy: keep
+
+  labels:
+    {{- include "hangat.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/purpose: review-uploads
+
+spec:
+  accessModes:
+    - {{ .Values.backend.persistence.accessMode | quote }}
+
+  {{- with .Values.backend.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+
+  resources:
+    requests:
+      storage: {{ .Values.backend.persistence.size }}
+
+{{- end }}

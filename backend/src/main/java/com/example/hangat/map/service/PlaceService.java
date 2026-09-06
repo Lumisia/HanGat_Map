@@ -9,6 +9,7 @@ import com.example.hangat.map.model.enums.PlaceType;
 import com.example.hangat.map.model.dto.PlaceImageResponse;
 import com.example.hangat.map.repository.PlaceImageRepository;
 import com.example.hangat.map.repository.PlaceRepository;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,6 +39,25 @@ public class PlaceService {
         return PlaceType.from(type)
                 .map(this::findList)
                 .orElseGet(placeRepository::findListAll);
+    }
+
+    /** 검색 드롭다운은 상위만 보여준다 - 페이징을 소비할 화면이 없어 limit 고정. */
+    private static final int SEARCH_LIMIT = 20;
+
+    /**
+     * 2글자 미만은 빈 결과 - 한 글자는 수백 건이 걸려 드롭다운이 의미를 잃는다.
+     * region·categories 는 화면 필터 범위(없으면 전체). in은 빈 목록을 못 받아 여기서 분기한다.
+     */
+    public List<PlaceListResponse> searchPlaces(String q, String region, List<String> categories) {
+        String query = q == null ? "" : q.trim();
+        if (query.length() < 2) {
+            return List.of();
+        }
+        String regionCode = (region == null || region.isBlank()) ? null : region;
+        if (categories == null || categories.isEmpty()) {
+            return placeRepository.searchList(query, regionCode, PageRequest.of(0, SEARCH_LIMIT));
+        }
+        return placeRepository.searchListInCategories(query, regionCode, categories, PageRequest.of(0, SEARCH_LIMIT));
     }
 
     public PlaceDetailResponse getPlace(Long placeId) {

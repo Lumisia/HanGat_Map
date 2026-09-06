@@ -24,9 +24,13 @@ export interface MapPlace {
   r: string
   /** 세부분류 표시명 (오름/해수욕장/박물관…). 미분류면 '정보 없음' */
   c: string
+  /** 카테고리 코드 (TOURIST/FOOD/CAFE/…) - 검색 결과의 핀 색 구분용 */
+  cat: string
   addr: string | null
   tel: string | null
   hours: string | null
+  /** 착한가격 지정 여부 - 상세 메뉴 섹션의 '착한가격' 뱃지 조건 (일반 식당 메뉴엔 안 붙인다) */
+  good: boolean
   park: boolean | null
   wc: boolean | null
   /** 그 장소의 날짜별 집중률. CrowdService가 채운다. 예보 없으면 null */
@@ -83,6 +87,8 @@ export interface PlaceDetail {
   images: PlaceImage[]
   /** 사진 출처 표기 문구 - 사진이 있으면 화면에 반드시 보여준다(공공누리) */
   imageAttribution: string | null
+  /** 소개 원문. 착한가격업소는 "대표메뉴: ○○ 9,000원 · …" 형태 - 핀 툴팁이 쓴다 */
+  overview: string | null
 }
 
 export interface PlaceImage {
@@ -99,6 +105,7 @@ interface BackendPlaceDetail {
   ratingAvg: number | null
   reviewCount: number
   images: BackendPlaceImage[]
+  overview: string | null
 }
 
 interface BackendPlaceImage {
@@ -156,13 +163,27 @@ export const MapPlaceService = {
     }
   },
 
+  /** 통합 검색 (MAP_002) - 이름·메뉴 부분 일치 상위 20건. 화면 필터(권역·업종) 범위를 함께 보낸다. 실패하면 빈 배열. */
+  async search (q: string, opts?: { region?: string | null, categories?: string[] }): Promise<MapPlace[]> {
+    try {
+      const params = new URLSearchParams({ q })
+      if (opts?.region) params.set('region', opts.region)
+      if (opts?.categories?.length) params.set('categories', opts.categories.join(','))
+      const rows = await apiGet<BackendPlace[]>(`/places/search?${params}`)
+      return rows.map(toMapPlace)
+    } catch {
+      return []
+    }
+  },
+
   /**
    * 상세 패널을 열 때만 부른다. 실패하면 null - 패널은 목록 데이터로 계속 그려진다.
    * 목업 모드는 id 가 null 이라 호출부에서 걸러진다.
    */
   async getDetail (id: number): Promise<PlaceDetail | null> {
     try {
-      const row = await apiGet<BackendPlaceDetail>(`/places/${id}`)
+      // 15초: 핀 전량 재생성이 메인 스레드를 5초 넘게 잠그면 5초 기본값으론 응답이 Abort로 죽는다
+      const row = await apiGet<BackendPlaceDetail>(`/places/${id}`, 15000)
       const images = (row.images ?? []).map(i => ({
         url: i.url,
         thumb: i.thumbnailUrl ?? i.url,
@@ -175,7 +196,8 @@ export const MapPlaceService = {
         ratingAvg: row.ratingAvg,
         reviewCount: row.reviewCount ?? 0,
         images,
-        imageAttribution: row.images?.[0]?.attribution ?? null
+        imageAttribution: row.images?.[0]?.attribution ?? null,
+        overview: row.overview ?? null
       }
     } catch {
       return null
@@ -193,9 +215,11 @@ function toMapPlace (row: BackendPlace): MapPlace {
     r: row.regionName,
     // 세부분류가 없는 장소가 있다 - 빈 문자열로 두면 드롭다운에 빈 항목이 생긴다
     c: row.tagName ?? '정보 없음',
+    cat: row.categoryCode,
     addr: row.roadAddress ?? row.lotAddress,
     tel: row.phone,
     hours: row.operatingHoursText,
+    good: row.goodPrice,
     park: row.parkingAvailable,
     wc: row.toiletAvailable,
     series: null,
@@ -215,6 +239,12 @@ function emptyLayers (): Record<LayerKey, MapPlace[]> {
   return { spot: [], food: [], dine: [], cafe: [], cvs: [], stay: [], mart: [] }
 }
 
+/** 목업 레이어 → 카테고리 코드. 검색 결과 핀 색이 폴백에서도 같게 보이게 한다. */
+const MOCK_CAT: Record<LayerKey, string> = {
+  spot: 'TOURIST', food: 'FOOD', dine: 'FOOD',
+  cafe: 'CAFE', cvs: 'CONVENIENCE', stay: 'LODGING', mart: 'MART'
+}
+
 /** 백엔드가 없을 때 쓰는 하드코딩 폴백 - 기존 화면과 똑같이 보인다. */
 function mockLayers (): Record<LayerKey, MapPlace[]> {
   const layers = emptyLayers()
@@ -223,7 +253,9 @@ function mockLayers (): Record<LayerKey, MapPlace[]> {
       id: null,
       n: m.n, x: m.x, y: m.y, r: m.r,
       c: m.c ?? m.m ?? '정보 없음',
+      cat: MOCK_CAT[k],
       addr: m.addr ?? null, tel: m.tel ?? null, hours: m.hours ?? null,
+      good: k === 'food',   // 목업 food 레이어 = 착한가격 샘플
       park: m.park ?? null, wc: m.wc ?? null,
       // b는 그대로 넘긴다 - 폴백의 목적이 '백엔드가 죽어도 화면이 살아 있는 것'인데,
       // 혼잡 값을 버리면 좌측 순위 목록까지 비어서 화면이 반쯤 죽는다.

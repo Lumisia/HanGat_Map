@@ -18,6 +18,8 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.UnknownContentTypeException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.ConnectException;
@@ -28,6 +30,7 @@ import java.net.http.HttpTimeoutException;
 import java.net.SocketTimeoutException;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 import java.util.Collections;
 import java.util.IdentityHashMap;
@@ -40,6 +43,7 @@ import java.util.regex.Pattern;
 @Component
 public class GeminiCourseAiProvider implements CourseAiProvider {
 
+    private static final Logger log = LoggerFactory.getLogger(GeminiCourseAiProvider.class);
     private static final String JSON_MIME_TYPE = "application/json";
     private static final String THINKING_LEVEL_LOW = "low";
     private static final Pattern LOCAL_TIME_PATTERN = Pattern.compile(
@@ -51,6 +55,7 @@ public class GeminiCourseAiProvider implements CourseAiProvider {
     private final GeminiProperties properties;
     private final CourseAiPrompt prompt;
     private final ObjectMapper objectMapper;
+    private final GeminiRetryPolicy retryPolicy;
 
     @Autowired
     public GeminiCourseAiProvider(
@@ -58,7 +63,8 @@ public class GeminiCourseAiProvider implements CourseAiProvider {
             CourseAiPrompt prompt,
             ObjectMapper objectMapper
     ) {
-        this(createRestClient(properties), properties, prompt, objectMapper);
+        this(createRestClient(properties), properties, prompt, objectMapper,
+                GeminiRetryPolicy.production());
     }
 
     GeminiCourseAiProvider(
@@ -67,10 +73,21 @@ public class GeminiCourseAiProvider implements CourseAiProvider {
             CourseAiPrompt prompt,
             ObjectMapper objectMapper
     ) {
+        this(restClient, properties, prompt, objectMapper, GeminiRetryPolicy.production());
+    }
+
+    GeminiCourseAiProvider(
+            RestClient restClient,
+            GeminiProperties properties,
+            CourseAiPrompt prompt,
+            ObjectMapper objectMapper,
+            GeminiRetryPolicy retryPolicy
+    ) {
         this.restClient = restClient;
         this.properties = properties;
         this.prompt = prompt;
         this.objectMapper = objectMapper;
+        this.retryPolicy = retryPolicy;
     }
 
     private static RestClient createRestClient(GeminiProperties properties) {
@@ -114,14 +131,7 @@ public class GeminiCourseAiProvider implements CourseAiProvider {
                     : buildCorrectionRequest(
                             input, previousResult, validationCode, validationMessage);
             phase = GeminiCallPhase.HTTP_EXCHANGE;
-            ResponseEntity<String> httpResponse = restClient.post()
-                    .uri("/models/{model}:generateContent", properties.model())
-                    .header("x-goog-api-key", properties.apiKey())
-                    .accept(MediaType.APPLICATION_JSON)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(request)
-                    .retrieve()
-                    .toEntity(String.class);
+            ResponseEntity<String> httpResponse = executeWithRetry(request);
 
             phase = GeminiCallPhase.PARSE_ENVELOPE;
             GeminiResponseMetadata metadata = responseMetadata(httpResponse);
@@ -139,15 +149,24 @@ public class GeminiCourseAiProvider implements CourseAiProvider {
                                 + diagnosticContext(exception.getStatusCode(), details)
                 );
             }
+            if (retryPolicy.isRetryableStatus(exception.getStatusCode().value())) {
+                throw new CourseAiException(
+                        CourseAiFailureType.TEMPORARILY_UNAVAILABLE,
+                        providerErrorMessage(exception.getStatusCode(), details, phase)
+                );
+            }
             throw new CourseAiException(
                     CourseAiFailureType.PROVIDER_ERROR,
                     providerErrorMessage(exception.getStatusCode(), details, phase)
             );
         } catch (ResourceAccessException exception) {
+            String failureType = networkFailureType(exception);
             throw new CourseAiException(
-                    CourseAiFailureType.PROVIDER_ERROR,
+                    retryPolicy.isRetryableNetworkFailure(failureType)
+                            ? CourseAiFailureType.TEMPORARILY_UNAVAILABLE
+                            : CourseAiFailureType.PROVIDER_ERROR,
                     "Gemini API 통신에 실패했습니다. PHASE=" + phase
-                            + ", NETWORK=" + networkFailureType(exception)
+                            + ", NETWORK=" + failureType
                             + ", HOST=" + endpointHost()
                             + ", MODEL=" + safeToken(properties.model()),
                     exception
@@ -162,6 +181,82 @@ public class GeminiCourseAiProvider implements CourseAiProvider {
                             + ", MODEL=" + safeToken(properties.model())
             );
         }
+    }
+
+    private ResponseEntity<String> executeWithRetry(GeminiGenerateRequest request) {
+        int attempt = 1;
+        boolean readTimeoutOccurred = false;
+        long startedAt = System.nanoTime();
+
+        while (true) {
+            try {
+                return restClient.post()
+                        .uri("/models/{model}:generateContent", properties.model())
+                        .header("x-goog-api-key", properties.apiKey())
+                        .accept(MediaType.APPLICATION_JSON)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(request)
+                        .retrieve()
+                        .toEntity(String.class);
+            } catch (RestClientResponseException exception) {
+                int status = exception.getStatusCode().value();
+                if (!retryPolicy.isRetryableStatus(status)
+                        || !retryPolicy.canRetry(attempt, readTimeoutOccurred)) {
+                    throw exception;
+                }
+                Duration delay = retryPolicy.retryDelay(
+                        attempt, exception.getResponseHeaders());
+                logRetry(attempt, status, null, delay, startedAt);
+                pauseBeforeRetry(delay);
+                attempt++;
+            } catch (ResourceAccessException exception) {
+                String failureType = networkFailureType(exception);
+                if (retryPolicy.isReadTimeout(failureType)) {
+                    readTimeoutOccurred = true;
+                }
+                if (!retryPolicy.isRetryableNetworkFailure(failureType)
+                        || !retryPolicy.canRetry(attempt, readTimeoutOccurred)) {
+                    throw exception;
+                }
+                Duration delay = retryPolicy.retryDelay(attempt, null);
+                logRetry(attempt, null, failureType, delay, startedAt);
+                pauseBeforeRetry(delay);
+                attempt++;
+            }
+        }
+    }
+
+    private void pauseBeforeRetry(Duration delay) {
+        try {
+            retryPolicy.sleep(delay);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new CourseAiException(
+                    CourseAiFailureType.PROVIDER_ERROR,
+                    "Gemini API 재시도가 중단되었습니다. HOST=" + endpointHost()
+                            + ", MODEL=" + safeToken(properties.model()),
+                    exception);
+        }
+    }
+
+    private void logRetry(
+            int failedAttempt,
+            Integer status,
+            String exceptionType,
+            Duration delay,
+            long startedAt
+    ) {
+        long elapsedMillis = (System.nanoTime() - startedAt) / 1_000_000;
+        log.warn(
+                "Gemini transient failure; model={}, attempt={}/{}, status={}, "
+                        + "exception={}, elapsedMs={}, retryDelayMs={}",
+                safeToken(properties.model()), failedAttempt,
+                "READ_TIMEOUT".equals(exceptionType)
+                        ? GeminiRetryPolicy.MAX_READ_TIMEOUT_ATTEMPTS
+                        : GeminiRetryPolicy.MAX_ATTEMPTS,
+                status == null ? "NONE" : status,
+                exceptionType == null ? "NONE" : safeToken(exceptionType),
+                elapsedMillis, delay.toMillis());
     }
 
     GeminiGenerateRequest buildRequest(CourseAiInputDto input) {

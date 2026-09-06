@@ -22,6 +22,8 @@ const apiRequest = rawApiRequest as (
 export interface ReviewItem {
   id: number
   userId: number
+  /** 작성자 닉네임. 탈퇴 등으로 유저가 없으면 null - 화면이 '여행자N'으로 대체한다 */
+  nickname: string | null
   /** null = 별점 없이 혼잡 제보만 한 후기 */
   rating: number | null
   congestionReport: 'QUIET' | 'NORMAL' | 'CROWDED' | null

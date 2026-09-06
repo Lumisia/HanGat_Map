@@ -1,6 +1,7 @@
 package com.example.hangat.course.model.entity;
 
 import com.example.hangat.course.model.enums.CourseItemSource;
+import com.example.hangat.domain.weather.model.entity.WeatherForecast;
 import com.example.hangat.map.model.entity.CongestionForecast;
 import com.example.hangat.map.model.entity.Place;
 import jakarta.persistence.Column;
@@ -119,11 +120,16 @@ public class CourseItem {
     private CongestionForecast plannedCongestionForecast;
 
     /**
-     * 저장 시점 날씨 예보 스냅숏. <b>연관관계가 아니라 Long인 이유</b>: weather_forecasts(17.0)
-     * 테이블이 아직 미구현이다(날씨는 현재 기상청 실시간 호출). 적재가 생기면 FK 전환.
+     * 저장 시점 날씨 예보 스냅숏(권역 DAILY 행, {@link WeatherForecast}). 혼잡 스냅숏과 같은 이유로
+     * ON DELETE SET NULL - 날씨 적재가 같은 발표 버전을 지우고 다시 넣을 때 코스가 FK로 막으면 안 되고,
+     * 지워지면 '날씨 정보 없음'으로 정직하게 돌아간다. 예보가 없던 날·권역은 NULL.
+     * (V1까지는 참조 테이블이 없어 Long이었다 - Flyway V3에서 FK 전환.)
      */
-    @Column(name = "planned_weather_forecast_id")
-    private Long plannedWeatherForecastId;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "planned_weather_forecast_id",
+            foreignKey = @ForeignKey(name = "fk_course_items_planned_weather"))
+    @OnDelete(action = OnDeleteAction.SET_NULL)
+    private WeatherForecast plannedWeatherForecast;
 
     /** 혼잡·취향·가격·동선 합성 점수. 엔진 산출값 - 여기서 재계산하지 않는다. */
     @Column(name = "recommendation_score", precision = 8, scale = 4)
@@ -175,7 +181,7 @@ public class CourseItem {
         this.place = newPlace;
         this.itemSource = CourseItemSource.REPLACEMENT;
         this.plannedCongestionForecast = plannedForecast;
-        this.plannedWeatherForecastId = null;
+        this.plannedWeatherForecast = null;
         this.recommendationScore = null;
         this.inboundDistanceM = null;
         this.inboundTravelMinutes = null;

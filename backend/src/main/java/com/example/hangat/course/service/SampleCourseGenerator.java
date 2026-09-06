@@ -14,10 +14,14 @@ import com.example.hangat.course.repository.CourseRepository;
 import com.example.hangat.domain.congestion.CongestionService;
 import com.example.hangat.domain.weather.WeatherService;
 import com.example.hangat.domain.weather.model.DailyWeather;
+import com.example.hangat.domain.weather.model.entity.WeatherForecast;
+import com.example.hangat.domain.weather.model.enums.WeatherGranularity;
+import com.example.hangat.domain.weather.repository.WeatherForecastRepository;
 import com.example.hangat.map.model.entity.CongestionForecast;
 import com.example.hangat.map.model.entity.Place;
 import com.example.hangat.map.model.enums.CongestionLevel;
 import com.example.hangat.map.repository.PlaceRepository;
+import com.example.hangat.map.service.PlaceNameNormalizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -72,6 +76,7 @@ public class SampleCourseGenerator {
     private final PlaceRepository placeRepository;
     private final CongestionService congestionService;
     private final WeatherService weatherService;
+    private final WeatherForecastRepository weatherForecastRepository;
     private final GeoService geoService;
     private final CourseTravelCalculator travelCalculator;
 
@@ -81,6 +86,7 @@ public class SampleCourseGenerator {
                                  PlaceRepository placeRepository,
                                  CongestionService congestionService,
                                  WeatherService weatherService,
+                                 WeatherForecastRepository weatherForecastRepository,
                                  GeoService geoService,
                                  CourseTravelCalculator travelCalculator) {
         this.presetRepository = presetRepository;
@@ -89,6 +95,7 @@ public class SampleCourseGenerator {
         this.placeRepository = placeRepository;
         this.congestionService = congestionService;
         this.weatherService = weatherService;
+        this.weatherForecastRepository = weatherForecastRepository;
         this.geoService = geoService;
         this.travelCalculator = travelCalculator;
     }
@@ -339,12 +346,27 @@ public class SampleCourseGenerator {
                 .dayNo((short) dayNo).position((short) position)
                 .visitDate(date)
                 .plannedCongestionForecast(forecast)
+                .plannedWeatherForecast(weatherSnapshot(place, date))
                 .inboundDistanceM(travel.distanceM()).inboundTravelMinutes(travel.minutes())
                 // 근거 코드는 명세서·프론트 union 목록(CONGESTION/STYLE/GOOD_PRICE/HIDDEN_GEM/ROUTE) 안에서만 쓴다
                 // - 날씨 사유는 코드가 아니라 아래 문구가 설명한다
                 .recommendationReasonCode("CONGESTION")
                 .recommendationReason(reasonFor(place, forecast, rainy, indoor))
                 .build();
+    }
+
+    /**
+     * 저장 시점 날씨 스냅숏 - 장소 권역·방문 날짜의 최신 발표분(DAILY). 없으면 null('날씨 정보 없음').
+     * 혼잡 스냅숏과 같은 뜻이다: 재열람 때 "그때 예보 vs 지금 예보"를 병기할 근거.
+     * 비 예보 판단({@link #isRainy})은 아직 주간 조회(북부 기준)를 쓴다 - 권역별 전환은 후속.
+     */
+    private WeatherForecast weatherSnapshot(Place place, LocalDate date) {
+        if (place.getRegion() == null) {
+            return null;
+        }
+        return weatherForecastRepository.findFirstByRegionIdAndForecastAtAndGranularityOrderByBaseAtDesc(
+                        place.getRegion().getId(), PlaceNameNormalizer.jejuDayToUtc(date), WeatherGranularity.DAILY)
+                .orElse(null);
     }
 
     /** 근거 문구 - 한산 장소 카드(MainService)와 같은 우선순위 + 날씨 사유 추가. */

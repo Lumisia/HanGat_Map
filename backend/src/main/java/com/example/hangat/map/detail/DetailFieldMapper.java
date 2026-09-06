@@ -75,6 +75,29 @@ public class DetailFieldMapper {
         return "14".equals(nz(it.contenttypeid())) ? clean(it.usefee()) : null;
     }
 
+    /**
+     * 대표 메뉴 문구 (음식점 39 전용). 착한가격 overview 와 같은 "대표메뉴: A · B" 형식 -
+     * 화면 메뉴 섹션을 그대로 재사용한다. KTO는 가격을 주지 않아 메뉴명만 담긴다.
+     */
+    public String menuText(PlaceIntroItem it) {
+        if (!"39".equals(nz(it.contenttypeid()))) {
+            return null;
+        }
+        java.util.LinkedHashSet<String> items = new java.util.LinkedHashSet<>();
+        for (String raw : new String[]{clean(it.firstmenu()), clean(it.treatmenu())}) {
+            if (raw == null) {
+                continue;
+            }
+            for (String piece : raw.split("[,/\n]")) {
+                String t = piece.trim();
+                if (!t.isEmpty()) {
+                    items.add(t);
+                }
+            }
+        }
+        return items.isEmpty() ? null : "대표메뉴: " + String.join(" · ", items);
+    }
+
     /** 입장료 원문이 '무료'만 뜻하는가 - 화면 배지용. 조건이 붙으면(※ 단, ...) 무료로 보지 않는다. */
     public boolean isFree(String useFeeText) {
         if (useFeeText == null) {

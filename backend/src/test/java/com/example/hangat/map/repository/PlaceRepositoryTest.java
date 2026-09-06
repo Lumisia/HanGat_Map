@@ -14,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.test.context.ActiveProfiles;
@@ -208,6 +209,85 @@ class PlaceRepositoryTest {
     @Test
     void 없는_id는_빈_Optional이다() {
         assertThat(placeRepository.findDetailById(999_999L)).isEmpty();
+    }
+
+    @Test
+    void 검색은_접두_이름_메뉴_순으로_연관도를_매긴다() {
+        placeWithCoords("바다식당", food, "대표메뉴: 성게국수 9,000원");
+        placeWithCoords("제주국수본가", food, null);
+        placeWithCoords("국수바다", food, null);
+        placeWithCoords("성산일출봉", tourist, null);
+        em.flush();
+        em.clear();
+
+        List<PlaceListResponse> found = placeRepository.searchList("국수", null, PageRequest.of(0, 20));
+
+        // 접두 일치(국수바다) > 이름 포함(제주국수본가) > 메뉴 매칭(바다식당)
+        assertThat(names(found)).containsExactly("국수바다", "제주국수본가", "바다식당");
+    }
+
+    @Test
+    void 검색은_좌표없는_장소와_폐업을_뺀다() {
+        // 결과 클릭 = 지도 이동이라 좌표 없는 곳은 데려갈 수 없다
+        place("좌표없는국수집", food, false, BusinessStatus.OPEN);
+        Place 폐업 = Place.builder()
+                .region(west).primaryCategory(food)
+                .name("폐업국수").normalizedName("폐업국수")
+                .latitude(new BigDecimal("33.1")).longitude(new BigDecimal("126.1"))
+                .businessStatus(BusinessStatus.CLOSED).isGoodPrice(false)
+                .build();
+        em.persist(폐업);
+        em.flush();
+        em.clear();
+
+        assertThat(placeRepository.searchList("국수", null, PageRequest.of(0, 20))).isEmpty();
+    }
+
+    @Test
+    void 검색은_limit_상위만_돌려준다() {
+        placeWithCoords("국수1", food, null);
+        placeWithCoords("국수2", food, null);
+        placeWithCoords("국수3", food, null);
+        em.flush();
+        em.clear();
+
+        assertThat(placeRepository.searchList("국수", null, PageRequest.of(0, 2))).hasSize(2);
+    }
+
+    @Test
+    void 검색은_권역과_카테고리_필터를_존중한다() {
+        Region east = Region.builder().code("EAST").name("동부").displayOrder((byte) 2).build();
+        em.persist(east);
+        Place 동부국수 = Place.builder()
+                .region(east).primaryCategory(food)
+                .name("동부국수").normalizedName("동부국수")
+                .latitude(new BigDecimal("33.4")).longitude(new BigDecimal("126.8"))
+                .businessStatus(BusinessStatus.OPEN).isGoodPrice(false)
+                .build();
+        em.persist(동부국수);
+        placeWithCoords("서부국수", food, null);
+        placeWithCoords("국수오름", tourist, null);
+        em.flush();
+        em.clear();
+
+        // 권역만 - 화면의 권역 칩과 같은 범위
+        assertThat(names(placeRepository.searchList("국수", "WEST", PageRequest.of(0, 20))))
+                .contains("서부국수", "국수오름").doesNotContain("동부국수");
+        // 카테고리만 - 화면의 업종 칩과 같은 범위
+        assertThat(names(placeRepository.searchListInCategories("국수", null, List.of("FOOD"), PageRequest.of(0, 20))))
+                .contains("동부국수", "서부국수").doesNotContain("국수오름");
+    }
+
+    private Place placeWithCoords(String name, PlaceCategory category, String overview) {
+        Place place = Place.builder()
+                .region(west).primaryCategory(category)
+                .name(name).normalizedName(name)
+                .latitude(new BigDecimal("33.3")).longitude(new BigDecimal("126.3"))
+                .overview(overview)
+                .businessStatus(BusinessStatus.OPEN).isGoodPrice(false)
+                .build();
+        em.persist(place);
+        return place;
     }
 
     private Place place(String name, PlaceCategory category, boolean goodPrice, BusinessStatus status) {

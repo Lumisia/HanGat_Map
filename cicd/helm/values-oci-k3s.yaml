@@ -1,0 +1,46 @@
+# ────────────────────────── OCI k3s 백엔드 ──────────────────────────
+
+backend:
+  replicaCount: 1
+
+  configEnv:
+    DB_URL: "jdbc:mariadb://mariadb.fileinnout.svc.cluster.local:3306/hangat"
+
+    FRONTEND_URL: "https://hangatjeju.com"
+    BACKEND_URL: "https://api.hangatjeju.com"
+    CORS_ALLOWED_ORIGINS: "https://hangatjeju.com,https://swagger.hangatjeju.com"
+
+  persistence:
+    enabled: true
+    storageClassName: local-path
+    accessMode: ReadWriteOnce
+    size: 5Gi
+
+
+# ────────────────────────── OCI k3s 프론트엔드 ──────────────────────────
+
+frontend:
+  replicaCount: 1
+
+
+# ────────────────────────── OCI ingress-nginx ──────────────────────────
+
+ingress:
+  enabled: true
+
+  className: nginx
+  forceSslRedirect: "true"
+
+  tls:
+    enabled: true
+    secretName: hangat-tls
+
+  web:
+    host: hangatjeju.com
+
+  api:
+    host: api.hangatjeju.com
+
+  swagger:
+    enabled: true
+    host: swagger.hangatjeju.com

@@ -283,3 +283,18 @@ ul,ol{list-style:none}
   /* 토스트가 하단 탭바에 가리지 않게 위로 올린다 */
   .toast-host{bottom:calc(56px + 16px + env(safe-area-inset-bottom, 0px))}
 }
+
+/*
+  F12를 도킹해 폭만 좁아진 데스크톱은 모바일 앱 셸로 전환하지 않는다.
+  본문은 좁은 폭에 맞춰 재배치하되, 탐색은 상단 헤더에 그대로 둔다.
+*/
+@media(max-width:768px) and (hover:hover) and (pointer:fine){
+  .nav{height:80px}
+  .nav-in{padding:0 10px;gap:2px}
+  .nav .tab{display:flex;padding:0 7px;font-size:12px}
+  .nav .tab.on::after{left:7px;right:7px}
+  .logo{font-size:18px;margin-right:6px}
+
+  .doc{padding-bottom:24px}
+  .toast-host{bottom:24px}
+}

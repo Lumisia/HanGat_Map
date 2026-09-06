@@ -44,8 +44,8 @@ describe('로드와 조회', () => {
     mockFetch(REAL)
     expect(await WeatherService.load()).toBe(true)
 
-    expect(WeatherService.byDate('2026-08-30')).toEqual({ k: '구름', rain: 0, t: 31, tmin: 26 })
-    expect(WeatherService.byDate('2026-09-03')).toEqual({ k: '비', rain: 1, t: 31, tmin: 25 })
+    expect(WeatherService.byDate('2026-08-30')).toEqual({ k: '구름', rain: 0, t: 31, tmin: 26, rp: 30 })
+    expect(WeatherService.byDate('2026-09-03')).toEqual({ k: '비', rain: 1, t: 31, tmin: 25, rp: 60 })
   })
 
   it('예보 범위 밖은 null - 8일째부터 날씨 칸이 숨는 근거다', async () => {

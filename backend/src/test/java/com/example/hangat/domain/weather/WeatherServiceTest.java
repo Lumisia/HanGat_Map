@@ -6,12 +6,17 @@ import com.example.hangat.domain.weather.model.DailyWeather;
 import com.example.hangat.domain.weather.model.MidLandItem;
 import com.example.hangat.domain.weather.model.MidTaItem;
 import com.example.hangat.domain.weather.model.ShortTermItem;
+import com.example.hangat.domain.weather.repository.WeatherForecastRepository;
+import com.example.hangat.map.model.entity.Region;
+import com.example.hangat.map.repository.RegionRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -19,14 +24,27 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/** 병합 로직 검증 - WeatherClient는 목으로 대체 (실호출 없음) */
+/**
+ * 라이브 병합 로직 검증 - WeatherClient는 목으로 대체(실호출 없음).
+ * 리포지토리 목은 기본값(빈 결과)이라 DB 미적재 상태 = 라이브 폴백 경로를 그대로 검증한다.
+ * DB 우선 경로는 {@link WeatherServiceStoreReadTest}.
+ */
 class WeatherServiceTest {
 
     private static final DateTimeFormatter YMD = DateTimeFormatter.BASIC_ISO_DATE;
 
-    private final LocalDate today = LocalDate.now();
+    private final LocalDate today = LocalDate.now(KmaIssueTimes.KST);   // 서비스와 같은 시계(KST)
     private final WeatherClient client = mock(WeatherClient.class);
-    private final WeatherService service = new WeatherService(client);
+    private final WeatherForecastRepository forecastRepository = mock(WeatherForecastRepository.class);
+    private final RegionRepository regionRepository = mock(RegionRepository.class);
+    private final WeatherService service = new WeatherService(client, forecastRepository, regionRepository);
+
+    /** 기준 권역(북부)은 존재하되 저장 예보는 없는 상태 = 라이브 폴백 경로. 모르는 권역이면 빈 목록이 되어 병합 검증이 안 된다 */
+    @BeforeEach
+    void mainRegionExistsWithoutStoredForecast() {
+        when(regionRepository.findByCode("NORTH")).thenReturn(Optional.of(
+                Region.builder().code("NORTH").name("북부").displayOrder((byte) 1).build()));
+    }
 
     /** D+0~3 각 날짜에 TMN/TMX/TMP/SKY/PTY/POP 행을 깔아주는 헬퍼 */
     private List<ShortTermItem> fakeShortTerm() {
@@ -55,7 +73,8 @@ class WeatherServiceTest {
 
     private MidLandItem fakeMidLand() {
         // wf3~wf7: null, 구름많음, 흐림, 맑음, 흐림 / rnSt3~rnSt7: null, 30, 40, 60, 70
-        return new MidLandItem(null, "구름많음", "흐림", "맑음", "흐림", null, 30, 40, 60, 70);
+        return new MidLandItem(null, "구름많음", "흐림", "맑음", "흐림", null, 30, 40, 60, 70,
+                null, null, null, null, null, null, null, null);
     }
 
     @Test

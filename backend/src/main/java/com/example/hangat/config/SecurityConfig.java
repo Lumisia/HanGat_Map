@@ -145,11 +145,25 @@ public class SecurityConfig {
                         HttpMethod.POST,
                         "/courses"
                 ).permitAll()
+                .requestMatchers(
+                        HttpMethod.POST,
+                        "/courses/*/accommodations/search"
+                ).permitAll()
+                // READY 숙소 변경은 서비스가 course-scoped claim proof를 검증한다.
+                // SAVED 코스는 같은 공개 경로에서도 로그인 owner만 통과한다.
+                .requestMatchers(
+                        HttpMethod.PATCH,
+                        "/courses/*/accommodation"
+                ).permitAll()
                 // 코스 상세는 비회원 임시 코스·메인 샘플을 열어야 해서 공개.
                 // 소유자가 있는 저장 코스는 서비스가 본인 여부를 검증한다(3307)
                 .requestMatchers(
                         HttpMethod.GET,
                         "/courses/*"
+                ).permitAll()
+                .requestMatchers(
+                        HttpMethod.GET,
+                        "/courses/*/routes/car"
                 ).permitAll()
                 // 스왑(#과밀지역우회)은 비회원 코스에도 열려 있어야 한다 - 생성이 비로그인 허용이라
                 // 생성 직후 대안 교체까지가 한 흐름이다. 소유자 있는 저장 코스는 서비스가 본인 검증
@@ -159,6 +173,11 @@ public class SecurityConfig {
                 ).permitAll()
 
                 // 그 외 API는 인증 필요
+                // 공개 후기 여부/미첨부 사진의 소유권은 ReviewPhotoService에서 검사한다.
+                .requestMatchers(HttpMethod.GET,
+                        "/media/reviews/*/*", "/uploads/reviews/*").permitAll()
+                .requestMatchers(HttpMethod.HEAD,
+                        "/media/reviews/*/*", "/uploads/reviews/*").permitAll()
                 .anyRequest().authenticated()
         );
         http.exceptionHandling(exception ->

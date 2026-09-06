@@ -4,6 +4,7 @@ import com.example.hangat.common.exception.BaseException;
 import com.example.hangat.common.model.BaseResponseStatus;
 import com.example.hangat.common.model.PageResponse;
 import com.example.hangat.course.model.CourseDetailResponse;
+import com.example.hangat.course.model.AccommodationDto;
 import com.example.hangat.course.model.CourseDuration;
 import com.example.hangat.course.model.CourseSummaryResponse;
 import com.example.hangat.course.model.entity.Course;
@@ -118,6 +119,7 @@ public class CourseQueryService {
                 course.getAverageCongestionRate(),
                 isSwappable(course, mine),
                 mine && course.getStatus() == CourseStatus.SAVED,
+                AccommodationDto.from(course.getAccommodationSourceMapping()),
                 days);
     }
 
@@ -141,7 +143,7 @@ public class CourseQueryService {
      * 조회 권한 확인. 삭제된 코스는 "없는 코스"로 답한다 - 존재 여부까지 숨긴다.
      */
     private Course readable(Long courseId, Long authUserId) {
-        Course course = courseRepository.findById(courseId)
+        Course course = courseRepository.findByIdWithAccommodation(courseId)
                 .orElseThrow(() -> new BaseException(BaseResponseStatus.COURSE_NOT_FOUND, courseId));
         if (course.getStatus() == CourseStatus.DELETED) {
             throw new BaseException(BaseResponseStatus.COURSE_NOT_FOUND, courseId);

@@ -5,17 +5,13 @@
  * 통합 전에는 App.vue 가 헤더·배너·탭바·토스트를 직접 그렸다.
  * 지도처럼 다른 뼈대가 필요한 화면이 생겨 레이아웃으로 분리했다.
  *
- * 푸터는 옵션이다. 랜딩 성격 화면(메인·AI코스)에만 어울려서
- * 라우트가 meta.footer 로 켠 곳에만 그린다.
+ * 모바일 하단 메뉴는 레이아웃을 바꿔도 유지돼야 하므로 App.vue 가 소유한다.
  */
 import { computed } from 'vue'
 import AppHeader from './AppHeader.vue'
-import MobileTabBar from './MobileTabBar.vue'
-import AppFooter from '../common/AppFooter.vue'
 import { useAuthStore } from '../../stores/auth.js'
 
 const props = defineProps({
-  footer: { type: Boolean, default: false },
   compactHeader: { type: Boolean, default: false },
   contentStyles: { type: Boolean, default: false }
 })
@@ -44,10 +40,7 @@ const banner = computed(() => {
 
   <div class="route-content" :class="{ 'content-scope': props.contentStyles }">
     <slot />
-    <AppFooter v-if="props.footer" />
   </div>
-
-  <MobileTabBar />
 </template>
 
 <style scoped>

@@ -180,7 +180,10 @@ h1 { font-size: 30px; line-height: 1.13; letter-spacing: -.02em; margin-bottom: 
 @media (max-width: 1023px) {
   .auth, .auth.has-carousel { grid-template-columns: 1fr; }
   .hero { display: none; }
-  .panel { padding: var(--sp-md) var(--margin-mobile) var(--sp-xl); }
+  .panel {
+    padding: var(--sp-md) var(--margin-mobile)
+      calc(var(--sp-xl) + var(--mobile-tabbar-h));
+  }
   .form { padding: var(--sp-sm) 0 var(--sp-lg); }
   h1 { font-size: 26px; }
   .brand { margin-bottom: var(--sp-lg); }

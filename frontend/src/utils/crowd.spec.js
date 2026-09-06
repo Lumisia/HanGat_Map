@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { crowdOn, weatherOn, tier, tierKo, dist, drive } from './crowd.js'
+import { crowdOn, weatherOn, tier, tierKo, dist, drive, bestDay, rank30 } from './crowd.js'
 import { PLACES } from '../data/places.js'
 
 /* ═══ 원본 index.html:496~532 의 구현을 그대로 붙여 넣은 대조군 ═══
@@ -89,7 +89,26 @@ describe('tier / tierKo — 원본 경계값(40, 70) 유지', () => {
     expect(tierKo(null)).toBe('정보 없음')
     expect(tierKo(10)).toBe('한산')
     expect(tierKo(50)).toBe('보통')
-    expect(tierKo(90)).toBe('붐빔')
+    expect(tierKo(90)).toBe('혼잡')
+  })
+})
+
+describe('bestDay / rank30 — 예보 없는 날(null) 처리', () => {
+  // 실측 예보가 3일치뿐이고 뒤가 결측인 장소 (예보 창 끝자락 상황)
+  const 꼬리결측 = { n: 'x', b: null, series: [30, 20, 40, null, null] }
+
+  it('null을 0으로 치지 않는다 - 안 거르면 예보 없는 날이 "가장 한산"으로 뽑혀 회색 화면으로 안내한다', () => {
+    expect(bestDay(꼬리결측, 0, 30)).toEqual({ k: 1, c: 20 })
+  })
+
+  it('구간 전체가 결측이면 c는 null - 호출부가 팁을 숨기는 근거', () => {
+    expect(bestDay(꼬리결측, 3, 27).c).toBeNull()
+  })
+
+  it('순위 계산도 결측 날은 제외한다', () => {
+    expect(rank30(꼬리결측, 1)).toBe(1)      // 20 = 가장 한산
+    expect(rank30(꼬리결측, 2)).toBe(3)      // 40 = 값 있는 셋 중 셋째
+    expect(rank30(꼬리결측, 3)).toBeNull()   // 결측 날 자체의 순위는 없다
   })
 })
 

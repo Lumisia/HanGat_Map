@@ -4,6 +4,8 @@ import com.example.hangat.common.exception.BaseException;
 import com.example.hangat.common.exception.GlobalExceptionHandler;
 import com.example.hangat.common.model.BaseResponse;
 import com.example.hangat.common.model.BaseResponseStatus;
+import com.example.hangat.course.ai.CourseAiException;
+import com.example.hangat.course.ai.CourseAiFailureType;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
 
@@ -40,5 +42,30 @@ class CommonModuleTests {
         assertThat(response.getStatusCode().value()).isEqualTo(500);
         assertThat(response.getBody().getCode()).isEqualTo(5002);
         assertThat(response.getBody().getResult()).isEqualTo("TourAPI timeout");
+    }
+
+    @Test
+    void Gemini_일시_장애는_안전한_503_응답으로_매핑된다() {
+        ResponseEntity<BaseResponse<Object>> response = handler.handleCourseAiException(
+                new CourseAiException(
+                        CourseAiFailureType.TEMPORARILY_UNAVAILABLE,
+                        "sensitive provider detail"));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(503);
+        assertThat(response.getBody().getCode()).isEqualTo(5003);
+        assertThat(response.getBody().getMessage())
+                .isEqualTo("AI 코스 생성 서버가 일시적으로 혼잡합니다. 잠시 후 다시 시도해 주세요.");
+        assertThat(response.getBody().getResult()).isNull();
+        assertThat(response.getBody().getMessage()).doesNotContain("sensitive provider detail");
+    }
+
+    @Test
+    void Gemini_비일시적_Provider_오류는_기존_500_계약을_유지한다() {
+        ResponseEntity<BaseResponse<Object>> response = handler.handleCourseAiException(
+                new CourseAiException(CourseAiFailureType.PROVIDER_ERROR, "bad request detail"));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(500);
+        assertThat(response.getBody().getCode()).isEqualTo(5002);
+        assertThat(response.getBody().getResult()).isNull();
     }
 }

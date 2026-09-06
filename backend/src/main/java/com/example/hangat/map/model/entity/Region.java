@@ -94,6 +94,15 @@ public class Region {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
+    /**
+     * 기상청 단기예보 격자를 채운다. 마스터 초기화가 <b>격자가 비어 있는 행에만</b> 부른다 -
+     * 운영처럼 권역이 먼저 들어간 DB에 격자를 뒤늦게 보태는 경로다.
+     */
+    public void assignKmaGrid(short gridX, short gridY) {
+        this.kmaGridX = gridX;
+        this.kmaGridY = gridY;
+    }
+
     /** JPA 전용. 팀 컨벤션이 허용한 Lombok에 @NoArgsConstructor가 없어 직접 선언한다. */
     protected Region() {
         this.isActive = true;

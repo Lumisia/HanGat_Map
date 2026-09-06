@@ -58,4 +58,15 @@ public class RegionResolver {
         // "제주특별자치도"까지만 있는 광역 항목 등
         return null;
     }
+
+    /** Kakao coord2regioncode의 공식 행정구역 필드만으로 기존 4권역을 판정한다. */
+    public String resolveAdministrativeRegion(String firstDepth, String secondDepth, String thirdDepth) {
+        if (!"제주특별자치도".equals(firstDepth)) {
+            return null;
+        }
+        return resolve(String.join(" ",
+                firstDepth == null ? "" : firstDepth,
+                secondDepth == null ? "" : secondDepth,
+                thirdDepth == null ? "" : thirdDepth));
+    }
 }

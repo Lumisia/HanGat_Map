@@ -46,7 +46,6 @@ export const state = reactive({
   F: { reg: '서부', bud: 150000, cat: '' },   // cat='' = 모든 종류
   L: { crowd: 1, spot: 1, food: 1, dine: 0, cafe: 0, cvs: 0, stay: 0, mart: 0, rain: 1 },
   favs: readLS('hangat_favs', []),
-  placeImgs: readLS('hangat_place_imgs', {}),
   courses: readLS('hangat_courses', []),
   toast: '',
 })
@@ -90,6 +89,30 @@ export async function toggleLayer (key) {
 }
 
 /**
+ * 딥링크(?place=id) 복원 — 공유 링크·마이페이지 "장소 보기"가 이걸 탄다.
+ * 이미 받아온 레이어에서 먼저 찾고, 없으면 지연 레이어(카페·편의점·마트)를
+ * 하나씩 내려받아 찾는다. 찾은 장소의 업종 칩은 켠다 - 핀이 보여야 상세가 말이 된다.
+ */
+export async function findPlaceById (id) {
+  for (const [k, rows] of Object.entries(state.layers)) {
+    const p = rows.find(x => x.id === id)
+    if (p) { state.L[k] = 1; return p }
+  }
+  if (!state.live) return null
+  for (const k of LAZY_LAYERS) {
+    if (state.layers[k].length || layerLoading.has(k)) continue
+    layerLoading.add(k)
+    const rows = await MapPlaceService.getLayer(k)
+    layerLoading.delete(k)
+    if (!rows) continue
+    state.layers[k] = rows
+    const p = rows.find(x => x.id === id)
+    if (p) { state.L[k] = 1; return p }
+  }
+  return null
+}
+
+/**
  * 장소·예보를 받아 state에 채운다. 지도 화면 진입 시 한 번 호출한다.
  * 예보는 장소보다 늦게 와도 되므로 따로 기다렸다가 붙인다 - 지도가 먼저 뜬다.
  */
@@ -111,12 +134,11 @@ export const inFilter = s =>
 
 export const inRegion = o => state.F.reg === '전체' || o.r === state.F.reg
 
-/** 좌측 목록 — 집중률 결측 장소는 순위에서 제외 (지도에는 회색 핀으로 남는다) */
+/** 좌측 목록 — 필터 안 관광지 전체를 정렬해 보여준다. 집중률 결측 장소는 순위에서 제외 (지도에는 회색 핀으로 남는다) */
 export const rankedRows = computed(() =>
   state.layers.spot.filter(s => inFilter(s) && crowd(s, state.di) != null)
     .map(s => ({ s, c: crowd(s, state.di), t: tier(crowd(s, state.di)) }))
-    .sort((a, b) => (state.sort === 'calm' ? a.c - b.c : b.c - a.c))
-    .slice(0, 8))
+    .sort((a, b) => (state.sort === 'calm' ? a.c - b.c : b.c - a.c)))
 
 /* ── 액션 ── */
 let toastTimer = null
@@ -139,10 +161,6 @@ export function toggleFav(name) {
   return true
 }
 export const isFav = name => state.favs.includes(name)
-
-export function savePlaceImgs() {
-  if (!writeLS('hangat_place_imgs', state.placeImgs)) toast('저장 공간이 가득 찼어요 (데모 한계)')
-}
 
 /* ── 코스 저장 (MY_001) ── */
 /** 같은 조건·같은 경유지면 같은 코스로 보고 중복 저장을 막는다 */

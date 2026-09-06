@@ -2,6 +2,7 @@ package com.example.hangat.map.controller;
 
 import com.example.hangat.common.model.BaseResponse;
 import com.example.hangat.map.service.CongestionIngestService;
+import com.example.hangat.map.detail.MenuIngestService;
 import com.example.hangat.map.detail.PlaceDetailIngestService;
 import com.example.hangat.map.image.PlaceImageIngestService;
 import com.example.hangat.map.service.PlaceIngestService;
@@ -36,19 +37,22 @@ public class PlaceIngestController {
     private final PlaceImageIngestService placeImageIngestService;
     private final com.example.hangat.map.goodprice.GoodPriceIngestService goodPriceIngestService;
     private final com.example.hangat.map.store.StoreIngestService storeIngestService;
+    private final MenuIngestService menuIngestService;
 
     public PlaceIngestController(PlaceIngestService placeIngestService,
                                  CongestionIngestService congestionIngestService,
                                  PlaceDetailIngestService placeDetailIngestService,
                                  PlaceImageIngestService placeImageIngestService,
                                  com.example.hangat.map.goodprice.GoodPriceIngestService goodPriceIngestService,
-                                 com.example.hangat.map.store.StoreIngestService storeIngestService) {
+                                 com.example.hangat.map.store.StoreIngestService storeIngestService,
+                                 MenuIngestService menuIngestService) {
         this.placeIngestService = placeIngestService;
         this.congestionIngestService = congestionIngestService;
         this.placeDetailIngestService = placeDetailIngestService;
         this.placeImageIngestService = placeImageIngestService;
         this.goodPriceIngestService = goodPriceIngestService;
         this.storeIngestService = storeIngestService;
+        this.menuIngestService = menuIngestService;
     }
 
     @Operation(summary = "카페·편의점·마트 적재 (MAP-04)",
@@ -83,6 +87,16 @@ public class PlaceIngestController {
             @RequestParam(name = "limit", required = false,
                     defaultValue = "" + PlaceImageIngestService.DEFAULT_LIMIT) int limit) {
         return BaseResponse.success(placeImageIngestService.ingest(limit));
+    }
+
+    @Operation(summary = "음식점 대표 메뉴 적재 (MAP-07)",
+            description = "KTO detailIntro2의 firstmenu·treatmenu를 overview에 채운다(가격 미제공). "
+                    + "메뉴 없는 음식점부터 limit만큼 처리하고 remaining이 0에 가까워질 때까지 다시 실행하면 이어진다.")
+    @PostMapping("/menus")
+    public BaseResponse<MenuIngestService.MenuIngestResult> ingestMenus(
+            @RequestParam(name = "limit", required = false,
+                    defaultValue = "" + MenuIngestService.DEFAULT_LIMIT) int limit) {
+        return BaseResponse.success(menuIngestService.ingest(limit));
     }
 
     @Operation(summary = "KTO 관광정보 적재",

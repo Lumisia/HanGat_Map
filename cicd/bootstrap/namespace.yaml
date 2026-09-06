@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Namespace
+
+metadata:
+  name: hangat
+  labels:
+    app.kubernetes.io/name: hangat
+    app.kubernetes.io/part-of: hangat
+    environment: production
+    owner: hangat-team
+
+    # 명백하게 위험한 Pod 설정은 즉시 차단한다.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: v1.35
+
+    # restricted 위반은 우선 경고와 감사 기록으로 확인한다.
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.35
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.35

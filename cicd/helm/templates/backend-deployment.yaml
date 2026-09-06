@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: {{ include "hangat.fullname" . }}-backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hangat.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+
+spec:
+  replicas: {{ .Values.backend.replicaCount }}
+  revisionHistoryLimit: {{ .Values.backend.revisionHistoryLimit }}
+
+  strategy:
+    {{- toYaml .Values.backend.strategy | nindent 4 }}
+
+  selector:
+    matchLabels:
+      {{- include "hangat.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+
+  template:
+    metadata:
+      labels:
+        {{- include "hangat.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: backend
+
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/backend-configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/backend-secret.yaml") . | sha256sum }}
+
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      securityContext:
+        {{- toYaml .Values.backend.podSecurityContext | nindent 8 }}
+
+      containers:
+        - name: backend
+
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+
+          securityContext:
+            {{- toYaml .Values.backend.containerSecurityContext | nindent 12 }}
+
+          ports:
+            - name: http
+              containerPort: {{ .Values.backend.service.targetPort }}
+              protocol: TCP
+
+          envFrom:
+            - configMapRef:
+                name: {{ include "hangat.fullname" . }}-backend-config
+
+            - secretRef:
+                name: {{ include "hangat.fullname" . }}-backend-secret
+
+          {{- if .Values.backend.probes.startup.enabled }}
+          startupProbe:
+            {{- toYaml .Values.backend.probes.startup.spec | nindent 12 }}
+          {{- end }}
+
+          {{- if .Values.backend.probes.liveness.enabled }}
+          livenessProbe:
+            {{- toYaml .Values.backend.probes.liveness.spec | nindent 12 }}
+          {{- end }}
+
+          {{- if .Values.backend.probes.readiness.enabled }}
+          readinessProbe:
+            {{- toYaml .Values.backend.probes.readiness.spec | nindent 12 }}
+          {{- end }}
+
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+
+          volumeMounts:
+            - name: review-uploads
+              mountPath: /app/uploads/reviews
+
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: review-uploads
+
+          {{- if .Values.backend.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "hangat.backendPvcName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ .Values.backend.tmpSizeLimit }}

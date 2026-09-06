@@ -3,12 +3,14 @@
 import { ref, computed, watch } from 'vue'
 import StarIcon from './StarIcon.vue'
 import ReviewSection from './ReviewSection.vue'
-import { state, toggleFav, isFav, toast, savePlaceImgs } from '@/stores/mapStore'
+import { state, toggleFav, isFav, toast } from '@/stores/mapStore'
 
 import { crowd, tier, tierKo, rank30, bestDay, CROWD_KO } from '@/utils/crowd'
 import { at, fmtK } from '@/utils/date'
 import { wxOf, wxIcon } from '@/utils/weather'
-import { dist, won, shrink } from '@/utils/geo'
+import { dist, won } from '@/utils/geo'
+import { copyText } from '@/utils/clipboard'
+import { shareToKakao, preloadKakao } from '@/composables/useKakaoShare'
 import MapPlaceService from '@/services/map/MapPlaceService'
 import ReviewApiService, { LEVEL_TO_KEY, absUrl } from '@/services/map/ReviewApiService'
 
@@ -17,7 +19,8 @@ const emit = defineEmits(['close', 'open-place', 'open-photo'])
 
 const view = ref('info')
 const hint = ref('')
-const imgInput = ref(null)
+/* 공유 시트 열림 - loadDetail(즉시 watch)이 닫으므로 선언이 이 위에 있어야 한다 */
+const shareOpen = ref(false)
 /** 휴무일·입장료는 상세 API에만 있다. 못 받아오면 null - 해당 줄만 안 보인다 */
 const detail = ref(null)
 
@@ -38,7 +41,8 @@ const tipText = computed(() => {
   return g >= 25 ? '훨씬 한산한' : g >= 12 ? '꽤 한산한' : '조금 더 한산한'
 })
 
-/* 선택일을 가운데 두고 7일 — 범위를 넘지 않게 시작점을 당긴다 */
+/* 선택일을 가운데 두고 7일 — 범위를 넘지 않게 시작점을 당긴다.
+   날씨 없는 날도 카드는 유지한다(혼잡은 30일 커버) - 그 날은 기온 대신 '예보 전'으로 표시 (2026-09-02 C안) */
 const week = computed(() => {
   const st = Math.max(0, Math.min(state.di - 1, 23))
   return Array.from({ length: 7 }, (_, j) => {
@@ -46,6 +50,16 @@ const week = computed(() => {
     return { k, d, w, cc, t: tier(cc), ko: tierKo(cc), label: `${d.getMonth() + 1}/${d.getDate()} ${'일월화수목금토'[d.getDay()]}` }
   })
 })
+
+/** 날씨가 제공되는 마지막 날짜 라벨. 창에 날씨 없는 카드가 있을 때 캡션으로 안내한다 */
+const wxUntil = computed(() => {
+  let last = -1
+  for (let i = 0; i < 30; i++) if (wxOf(i)) last = i
+  if (last < 0) return null
+  const d = at(last)
+  return `${d.getMonth() + 1}/${d.getDate()}`
+})
+const weatherGap = computed(() => week.value.some(w => !w.w))
 
 /**
  * 입장료 배지. 모르면 배지를 안 그린다 -
@@ -60,21 +74,31 @@ const feeBadge = computed(() => {
 const hasAmen = computed(() =>
   feeBadge.value || s.value.park != null || s.value.wc != null || s.value.in)
 
-/** KTO 실사진. 있으면 데모 업로드 대신 이걸 쓴다 */
+/** 착한가격 대표 메뉴 - 상세 overview가 "대표메뉴: ..." 형태일 때만 (관광지 소개문과 구분) */
+const menuRows = computed(() => {
+  const o = detail.value?.overview
+  if (!o || !o.startsWith('대표메뉴:')) return []
+  return o.replace(/^대표메뉴:\s*/, '').split(' · ').map(item => {
+    const m = item.match(/^(.*?)\s*([\d,]+원)$/)
+    return m ? { n: m[1], p: m[2] } : { n: item, p: '' }
+  })
+})
+
+/** 관광공사(KTO) 공식 사진 - 상세에 싣는 사진은 이것뿐이다 */
 const ktoImages = computed(() => detail.value?.images ?? [])
-const photos = computed(() => state.placeImgs[s.value.n] || [])
 /* 후기 요약은 상세 API(places.rating_avg 비정규화)가 준다 - localStorage 데모 아님 */
 const reviewCount = computed(() => detail.value?.reviewCount ?? 0)
 const ratingAvg = computed(() => detail.value?.ratingAvg ?? null)
 /** 하단 미리보기용 최근 3건 */
 const previewReviews = ref([])
-const rvDate = iso => { const d = new Date(iso); return `${d.getMonth() + 1}/${d.getDate()}` }
+const rvDate = iso => { const d = new Date(iso); return `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}` }
 
 watch(() => props.place.n, loadDetail, { immediate: true })
 
 async function loadDetail() {
   view.value = 'info'
   hint.value = ''
+  shareOpen.value = false
   detail.value = null
   // 목업 모드는 id 가 없다
   if (s.value.id == null) return
@@ -117,22 +141,53 @@ function findNearby() {
   hint.value = nearby.value.length ? '' : '<span style="color:var(--tx3)">반경 12km 안에는 한산한 대안이 없어요.</span>'
 }
 
-function copyAddr() {
-  const done = () => toast('주소를 복사했어요')
-  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(s.value.addr).then(done).catch(done)
-  else done()
+async function copyAddr() {
+  toast(await copyText(s.value.addr)
+    ? '주소를 복사했어요'
+    : '복사가 막혀 있어요 — 주소를 드래그해 직접 복사해 주세요')
 }
 
-async function onImgFiles(e) {
-  const list = state.placeImgs[s.value.n] || (state.placeImgs[s.value.n] = [])
-  for (const f of [...e.target.files].slice(0, 5 - list.length)) list.push(await shrink(f, 640))
-  savePlaceImgs()
-  e.target.value = ''
+/* ── 친구에게 공유 (MAP_007) ── */
+/** 시트를 열 때 카카오 SDK를 미리 받아둔다 - 클릭 시 팝업이 활성화 안에서 열리게 */
+function toggleShare() {
+  shareOpen.value = !shareOpen.value
+  if (shareOpen.value) preloadKakao()
 }
-function delImg(i) {
-  ;(state.placeImgs[s.value.n] || []).splice(i, 1)
-  savePlaceImgs()
+
+/** 공유용 딥링크(?place=id) - 목업 장소는 id가 없어 현재 화면 주소로 대신한다 */
+const shareUrl = computed(() =>
+  s.value.id != null ? `${location.origin}/map?place=${s.value.id}` : location.href)
+
+async function copyLink() {
+  shareOpen.value = false
+  toast(await copyText(shareUrl.value)
+    ? '링크를 복사했어요 — 붙여넣으면 이 장소가 바로 열려요'
+    : '복사가 막혀 있어요 — 주소창의 주소를 직접 복사해 주세요')
 }
+
+/* 팝업은 클릭 활성화 안에서 열려야 한다 - await 하면 빈 창이 뜬다.
+   그래서 시트를 열 때 preloadKakao()로 미리 받아두고 여기선 동기로 연다.
+   아직 로드 전이면(느린 회선) 열지 않고 링크 복사로 안내한다 */
+function shareKakao() {
+  shareOpen.value = false
+  const opened = shareToKakao({
+    title: s.value.n,
+    description: s.value.addr || [s.value.c, s.value.r].filter(Boolean).join(' · '),
+    imageUrl: ktoImages.value[0]?.url ?? null,
+    url: shareUrl.value,
+  })
+  if (!opened) toast('카카오톡 준비 중이에요 — 잠시 후 다시 누르거나 링크 복사를 이용해 주세요')
+}
+
+/** OS 공유 시트(모바일 브라우저 대부분, 데스크톱은 일부만 지원) */
+const canNative = typeof navigator.share === 'function'
+async function shareNative() {
+  shareOpen.value = false
+  try {
+    await navigator.share({ title: s.value.n, text: `${s.value.n} — 한갓지도`, url: shareUrl.value })
+  } catch { /* 사용자가 시트를 닫은 것 - 정상 */ }
+}
+
 </script>
 
 <template>
@@ -145,7 +200,14 @@ function delImg(i) {
         </div>
         <!-- MAP_009 찜 -->
         <button class="fav" :class="{ on: isFav(s.n) }" aria-label="찜하기" @click="toggleFav(s.n)">♥</button>
-        <button class="share" @click="toast('현재 화면 주소를 복사해 공유하세요 (URL에 상태 저장됨)')">친구에게 공유</button>
+        <div class="share-wrap">
+          <button class="share" :aria-expanded="shareOpen" @click="toggleShare">공유하기</button>
+          <div v-if="shareOpen" class="share-sheet">
+            <button @click="shareKakao"><i class="si ka"></i>카카오톡</button>
+            <button @click="copyLink"><i class="si cp"></i>링크 복사</button>
+            <button v-if="canNative" @click="shareNative"><i class="si nt"></i>더보기</button>
+          </div>
+        </div>
         <button class="pox" @click="emit('close')">×</button>
       </div>
 
@@ -163,7 +225,8 @@ function delImg(i) {
         <span class="ar">›</span>
       </button>
 
-      <!-- 장소 사진(MAP-08): KTO 실사진이 있으면 그것만, 없으면 데모 업로드 -->
+      <!-- 장소 사진(MAP-08): 관광공사(KTO) 공식 사진만 싣는다.
+           사용자 사진은 방문 후기(MAP_008)에서만 올린다 - 상세 직접 업로드(데모)는 2026-09-03 제거 -->
       <div v-if="ktoImages.length" class="pimg">
         <img v-for="(p, i) in ktoImages" :key="p.url" :src="p.thumb" :alt="p.caption || `${s.n} 사진`"
           title="클릭하면 크게 보기" style="cursor:zoom-in"
@@ -171,14 +234,6 @@ function delImg(i) {
       </div>
       <div v-if="ktoImages.length && detail?.imageAttribution" class="pimg-src">
         {{ detail.imageAttribution }}
-      </div>
-      <div v-if="!ktoImages.length" class="pimg">
-        <img v-for="(p, i) in photos" :key="i" :src="p" :alt="`${s.n} 사진`"
-          title="더블클릭하면 삭제 (데모)" @dblclick="delImg(i)">
-        <button v-if="photos.length < 5" class="add" @click="imgInput.click()">
-          <span style="font-size:17px">＋</span>사진 추가<span style="font-size:9px;opacity:.7">데모</span>
-        </button>
-        <input ref="imgInput" type="file" accept="image/*" multiple style="display:none" @change="onImgFiles">
       </div>
 
       <div class="lead">
@@ -206,10 +261,20 @@ function delImg(i) {
           @click="state.di = w.k">
           <div class="wd">{{ w.label }}</div>
           <div class="wi" v-html="w.w ? wxIcon(w.w.k, 27) : ''"></div>
-          <div class="wt">{{ w.w ? w.w.t + '°' : '–' }}</div>
-          <div class="wc" :style="{ background: `var(--${w.t})` }" :title="w.ko"></div>
+          <!-- 날씨 없는 날은 고장이 아니라 원래 없는 것 - '-' 대신 명시적으로 말한다 -->
+          <div v-if="w.w" class="wt">{{ w.w.t }}°</div>
+          <div v-else class="wt pre">예보 전</div>
+          <!-- 강수확률 30% 이상만 표시. 빈 칸도 같은 높이로 두어 카드 줄이 맞는다 -->
+          <div class="wp">
+            <template v-if="w.w && w.w.rp >= 30">
+              <svg width="7" height="9" viewBox="0 0 8 10" aria-hidden="true"><path d="M4 .4C5.3 2.3 6.8 4 6.8 5.9a2.8 2.8 0 1 1-5.6 0C1.2 4 2.7 2.3 4 .4Z" fill="#2F93E0"/></svg>{{ w.w.rp }}%
+            </template>
+          </div>
+          <!-- 혼잡 바는 핀과 같은 면색(-st) - 글자용 진한 톤을 면에 쓰면 핀과 색이 어긋난다 -->
+          <div class="wc" :style="{ background: `var(--${w.t}-st, var(--${w.t}))` }" :title="w.ko"></div>
         </div>
       </div>
+      <div v-if="weatherGap && wxUntil" class="wx-note">날씨는 {{ wxUntil }}까지 제공돼요 · 혼잡은 30일 표시</div>
 
       <!-- 없는 정보(null)는 배지를 그리지 않는다 - '주차 없음'과 '주차 정보 없음'은 다르다 -->
       <div v-if="hasAmen" class="amen">
@@ -217,6 +282,14 @@ function delImg(i) {
         <span v-if="s.park != null" class="am" :class="{ no: !s.park }">주차</span>
         <span v-if="s.wc != null" class="am" :class="{ no: !s.wc }">화장실</span>
         <span v-if="s.in" class="am">실내</span>
+      </div>
+
+      <!-- 착한가격 대표 메뉴 (행안부 실데이터) - 메뉴 없는 업소는 섹션 자체를 숨긴다 -->
+      <div v-if="menuRows.length" class="menu">
+        <div class="mn-h"><i></i>대표 메뉴<span v-if="s.good" class="mn-b">착한가격</span></div>
+        <div v-for="m in menuRows" :key="m.n" class="mn-r">
+          <span class="mn-n">{{ m.n }}</span><span class="mn-p">{{ m.p }}</span>
+        </div>
       </div>
 
       <!-- 주소(복사) · 운영시간(있을 때만 — 상시 개방은 줄 자체를 표시하지 않음) · 전화 -->
@@ -277,8 +350,8 @@ function delImg(i) {
         <template v-if="previewReviews.length">
           <div v-for="r in previewReviews" :key="r.id" class="rv-i">
             <div class="rv-h">
-              <span class="rv-av">여</span>
-              <span class="rv-nm">여행자{{ r.userId }}</span>
+              <span class="rv-av">{{ (r.nickname ?? '여')[0] }}</span>
+              <span class="rv-nm">{{ r.nickname ?? `여행자${r.userId}` }}</span>
               <span class="rv-dt">{{ rvDate(r.createdAt) }} 작성</span>
             </div>
             <div class="rv-mt">

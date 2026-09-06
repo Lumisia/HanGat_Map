@@ -1,10 +1,25 @@
 spring:
   profiles:
     default: dev
+
   servlet:
     multipart:
       max-file-size: 5MB
       max-request-size: 26MB
+
   jackson:
     deserialization:
       accept-empty-string-as-null-object: true
+
+  # ────────────────────────── DB 마이그레이션 ──────────────────────────
+
+  flyway:
+    enabled: false
+    locations: classpath:db/migration
+    encoding: UTF-8
+    validate-on-migrate: true
+    clean-disabled: true
+    fail-on-missing-locations: true
+    out-of-order: false
+    baseline-on-migrate: false
+    baseline-version: 1

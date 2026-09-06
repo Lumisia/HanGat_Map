@@ -40,6 +40,20 @@ public class PlaceController {
         return BaseResponse.success(placeService.getPlaces(type));
     }
 
+    @Operation(summary = "장소 통합 검색",
+            description = "이름·대표 메뉴(overview) 부분 일치 상위 20건. 2글자 미만은 빈 목록. 좌표 없는 장소는 제외. "
+                    + "region·categories 를 주면 화면 필터(권역·업종 칩) 범위 안에서만 찾는다.")
+    @GetMapping("/search")
+    public BaseResponse<List<PlaceListResponse>> searchPlaces(
+            @Parameter(description = "검색어 (2글자 이상)")
+            @RequestParam(name = "q") String q,
+            @Parameter(description = "권역 코드 (EAST/WEST/SOUTH/NORTH). 생략하면 전체")
+            @RequestParam(name = "region", required = false) String region,
+            @Parameter(description = "카테고리 코드 목록 (쉼표 구분, 예: TOURIST,FOOD). 생략하면 전체")
+            @RequestParam(name = "categories", required = false) List<String> categories) {
+        return BaseResponse.success(placeService.searchPlaces(q, region, categories));
+    }
+
     @Operation(summary = "장소 상세", description = "없는 id면 PLACE_NOT_FOUND(3201) → HTTP 400. 폐업 장소도 반환한다(찜·공유 링크 보호).")
     @GetMapping("/{placeId}")
     public BaseResponse<PlaceDetailResponse> getPlace(@PathVariable("placeId") Long placeId) {

@@ -35,10 +35,10 @@
 
 /* 카카오 CustomOverlay 안에서 핀과 라벨을 겹쳐 배치 */
 .pw{position:relative;display:flex;align-items:center;justify-content:center}
+/* 핀 이름표는 상세 줌(level 7 이하)에서만 - 관광지·업종 공통. 축소 뷰의 라벨 밭 방지 */
 .pw .lb-t{position:absolute;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);
-  pointer-events:none}
-.pw .poi-label{display:none}
-#map.labels-visible .pw .poi-label{display:block}
+  pointer-events:none;display:none}
+#map.labels-visible .pw .lb-t{display:block}
 
 /* 글로우 핀 */
 .pn{border-radius:50%;border:2px solid #fff;box-sizing:border-box;
@@ -52,7 +52,7 @@
 .lb-t{background:var(--surf);border-radius:var(--rp);padding:3px 10px;font-size:11.5px;
   font-weight:800;color:var(--tx);box-shadow:0 2px 7px rgba(30,50,80,.18);white-space:nowrap}
 .poi-marker{width:17px;height:17px;border-radius:50%;border:3px solid #fff;box-sizing:border-box;
-  box-shadow:0 2px 7px rgba(16,35,48,.35)}
+  box-shadow:0 2px 7px rgba(16,35,48,.35);cursor:pointer}
 /* 업종별 마커 — 혼잡 3색(민트·앰버·레드)과 겹치지 않는 색만 사용 */
 .mk-food{background:var(--pink)}
 .mk-dine{background:#7b6ef6}
@@ -60,9 +60,31 @@
 .mk-cvs{background:#2f7de1}
 .mk-stay{background:#5f7d95}
 .mk-mart{background:#c2571a}
+/* 착한가격 클릭 툴팁 (MAP_001: 상호·대표메뉴·가격) */
+.gp-tip{display:flex;flex-direction:column;gap:3px;background:var(--surf);border-radius:12px;
+  padding:9px 13px;box-shadow:0 3px 14px rgba(30,50,80,.26);white-space:nowrap}
+.gp-tip b{font-size:12.5px;color:var(--tx)}
+.gp-tip span{font-size:11.5px;font-weight:600;color:var(--tx2)}
+.gp-tip .gp-more{margin-top:5px;padding:5px 0 1px;border:0;border-top:1px solid rgba(0,0,0,.08);
+  background:none;color:var(--ac);font-size:11.5px;font-weight:800;cursor:pointer}
+
+/* 상세 패널 착한가격 대표 메뉴 (MAP_007) */
+.menu{margin:10px 0 4px;padding:10px 12px;background:var(--surf2);border-radius:12px}
+.mn-h{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:var(--tx2);margin-bottom:7px}
+.mn-h i{width:3px;height:11px;border-radius:2px;background:var(--pink)}
+.mn-b{margin-left:auto;font-size:10px;font-weight:800;color:var(--pink);background:var(--pink-bg);padding:2px 8px;border-radius:999px}
+.mn-r{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:3px 0}
+.mn-n{color:var(--tx)}
+.mn-p{font-weight:800;color:var(--tx);white-space:nowrap}
+
+/* 선택 장소 강조 핀 - 레이어가 꺼져 있어도 검색으로 연 곳은 보여준다 (MAP_002) */
+.pw .lb-t.sel-on{display:block}
+.poi-marker.sel-pick{width:24px;height:24px;border-width:4px}
+
 .mk-num{background:var(--ac);color:var(--on-ac);border-radius:50%;width:20px;height:20px;font-size:11px;
   font-weight:800;display:flex;align-items:center;justify-content:center;
-  border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.28)}
+  border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.28);cursor:pointer}
+.mk-num.pick{width:26px;height:26px;font-size:13px;box-shadow:0 0 0 5px rgba(0,184,163,.34),0 2px 9px rgba(0,0,0,.3)}
 
 /* ── 플로팅 공통 ── */
 .fl{position:absolute;background:var(--surf);border-radius:var(--r);box-shadow:var(--sh2)}
@@ -98,6 +120,12 @@
 .rpin.mid{background:#ff9500;box-shadow:0 0 0 3.5px rgba(255,149,0,.3),0 1px 4px rgba(0,0,0,.22)}
 .rpin.busy{background:#f4364c;box-shadow:0 0 0 4px rgba(244,54,76,.34),0 1px 4px rgba(0,0,0,.22)}
 .rpin.food{background:#ec3a70;border-radius:4px;box-shadow:0 0 0 3.5px rgba(236,58,112,.28),0 1px 4px rgba(0,0,0,.22)}
+/* 검색 결과의 업종 핀 색 - 지도 마커(mk-*)와 같은 팔레트 */
+.rpin.dine{background:#7b6ef6;box-shadow:0 0 0 3px rgba(123,110,246,.26),0 1px 4px rgba(0,0,0,.2)}
+.rpin.cafe{background:#a0703c;box-shadow:0 0 0 3px rgba(160,112,60,.26),0 1px 4px rgba(0,0,0,.2)}
+.rpin.cvs{background:#2f7de1;box-shadow:0 0 0 3px rgba(47,125,225,.26),0 1px 4px rgba(0,0,0,.2)}
+.rpin.stay{background:#5f7d95;box-shadow:0 0 0 3px rgba(95,125,149,.26),0 1px 4px rgba(0,0,0,.2)}
+.rpin.mart{background:#c2571a;box-shadow:0 0 0 3px rgba(194,87,26,.26),0 1px 4px rgba(0,0,0,.2)}
 .rdot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
 .row .info{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
 .row .rn{display:block;font-size:13.5px;font-weight:700;
@@ -198,6 +226,18 @@
 .poh .sub{font-size:11.5px;color:var(--tx3);margin-top:1px}
 .share{background:var(--pink-bg);color:var(--pink);font-size:11.5px;font-weight:700;
   padding:6px 12px;border-radius:var(--rp);white-space:nowrap}
+/* 공유 시트 - 버튼 아래로 펼쳐지는 작은 메뉴 (카카오톡 / 링크 복사 / OS 공유) */
+.share-wrap{position:relative}
+.share-sheet{position:absolute;top:calc(100% + 6px);right:0;z-index:40;min-width:130px;
+  background:var(--surf);border:1px solid var(--line2);border-radius:12px;
+  box-shadow:0 8px 24px rgba(0,0,0,.14);padding:5px;display:flex;flex-direction:column}
+.share-sheet button{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;
+  font-size:12.5px;font-weight:700;color:var(--tx2);text-align:left;white-space:nowrap}
+.share-sheet button:hover{background:var(--surf2)}
+.share-sheet .si{width:18px;height:18px;border-radius:6px;flex-shrink:0}
+.share-sheet .si.ka{background:#fee500}
+.share-sheet .si.cp{background:var(--ac-bg)}
+.share-sheet .si.nt{background:var(--surf2);border:1px solid var(--line2)}
 .pox{color:var(--tx3);font-size:17px;line-height:1;padding:2px 5px}
 .lead{font-size:13px;line-height:1.65;margin-bottom:12px}
 .lead b{font-weight:800}
@@ -222,18 +262,18 @@
 .wxc.on .wd{color:var(--ac-dk)}
 .wxc .wi{height:30px;display:flex;align-items:center;justify-content:center;margin:3px 0 1px}
 .wxc .wt{font-size:14px;font-weight:800;letter-spacing:-.03em}
+.wxc .wt.pre{font-size:10px;font-weight:600;color:var(--tx3);line-height:17px}
+.wxc .wp{height:12px;display:flex;align-items:center;justify-content:center;gap:2px;
+  font-size:9.5px;font-weight:700;color:#2F93E0;letter-spacing:-.02em}
+.wx-note{font-size:10.5px;color:var(--tx3);margin:-7px 2px 12px}
 .wxc .wc{height:3px;border-radius:2px;margin:8px 13px 0;opacity:.85}
 .wxi{display:inline-block;vertical-align:-4px;flex-shrink:0}
-/* ── 장소 사진 (실데이터=KTO firstimage, 프로토타입=데모 업로드) ── */
+/* ── 장소 사진 (KTO 공식 사진만 - 사용자 사진은 방문 후기에서) ── */
 .pimg{display:flex;gap:7px;overflow-x:auto;margin-bottom:12px;padding-bottom:4px}
 .pimg::-webkit-scrollbar{height:4px}
 .pimg::-webkit-scrollbar-thumb{background:var(--line2);border-radius:3px}
 .pimg img{height:96px;border-radius:12px;flex-shrink:0;object-fit:cover;max-width:170px}
 .pimg-src{margin:-8px 0 12px;font-size:10.5px;color:var(--tx3)}
-.pimg .add{flex-shrink:0;width:74px;height:96px;border:1.5px dashed var(--line2);border-radius:12px;
-  color:var(--tx3);font-size:11px;font-weight:600;display:flex;flex-direction:column;
-  align-items:center;justify-content:center;gap:4px;line-height:1.3}
-.pimg .add:hover{border-color:var(--ac);color:var(--ac)}
 /* ── 정보 행: 주소·운영시간·전화 ── */
 .pinfo{display:flex;flex-direction:column;gap:2px;margin-bottom:13px;
   border-top:1px solid var(--line);padding-top:11px}

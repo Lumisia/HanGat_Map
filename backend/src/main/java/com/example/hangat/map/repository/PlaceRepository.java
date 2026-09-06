@@ -88,6 +88,39 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
                                                            @Param("goodPrice") Boolean goodPrice);
 
     /**
+     * 통합 검색 (MAP_002) - 이름·메뉴(overview) 부분 일치. 화면의 필터(권역·업종 칩) 범위 안에서만 찾는다.
+     * 좌표 없는 장소는 뺀다: 결과 클릭 = 지도 이동이라 좌표가 필수다.
+     * 이름 일치를 메뉴 일치보다 앞세운다 - 검색 엔진 없이 내는 최소한의 연관도.
+     * overview는 CLOB이라 SELECT에는 여전히 싣지 않고(§9.1) 조건으로만 쓴다.
+     */
+    String SEARCH_WHERE = """
+
+             and p.latitude is not null and p.longitude is not null
+             and (:region is null or r.code = :region)
+             and (p.name like concat('%', :q, '%') or p.overview like concat('%', :q, '%'))""";
+
+    /** 접두 일치 > 이름 포함 > 메뉴 매칭, 같은 급이면 짧은 이름 우선 - "성산" 검색에 성산일출봉이 성산점 지점명보다 위로 온다. */
+    String SEARCH_ORDER = """
+
+            order by case when p.name like concat(:q, '%') then 0
+                          when p.name like concat('%', :q, '%') then 1
+                          else 2 end,
+                     length(p.name), p.id""";
+
+    /** 업종 칩이 하나도 없거나 전부 켜진 상태 - 카테고리 조건 없이 찾는다. */
+    @Query(LIST_SELECT + SEARCH_WHERE + SEARCH_ORDER)
+    List<PlaceListResponse> searchList(@Param("q") String q,
+                                       @Param("region") String region,
+                                       Pageable pageable);
+
+    /** 켜진 업종 칩의 카테고리 안에서만. JPQL의 in은 빈 목록을 못 받아 쿼리를 나눈다 - 분기는 서비스가 한다. */
+    @Query(LIST_SELECT + SEARCH_WHERE + " and c.code in :categories" + SEARCH_ORDER)
+    List<PlaceListResponse> searchListInCategories(@Param("q") String q,
+                                                   @Param("region") String region,
+                                                   @Param("categories") List<String> categories,
+                                                   Pageable pageable);
+
+    /**
      * 상세. 연관 2개를 한 쿼리에서 초기화한다.
      * 폐업도 그대로 돌려준다 - 찜·공유 링크로 들어오는 경로라 404로 감추면 폐업 사실조차 전달하지 못한다.
      */
@@ -121,6 +154,15 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
             order by p.id
             """)
     List<Place> findWithoutDetail(Pageable pageable);
+
+    /** 메뉴(overview)가 아직 없는 음식점부터. KTO가 메뉴를 안 주는 곳도 다시 잡힌다 - 상세 적재의 empty 와 같은 트레이드오프 */
+    @Query("""
+            select p from Place p
+            where p.primaryCategory.code = 'FOOD'
+              and p.overview is null
+            order by p.id
+            """)
+    List<Place> findFoodWithoutMenu(Pageable pageable);
 
     List<Place> findByNormalizedName(String normalizedName);
 

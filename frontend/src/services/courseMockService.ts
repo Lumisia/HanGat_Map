@@ -1,5 +1,4 @@
-import type {
-  AccommodationInput,
+import type { AccommodationInput,
   AccuracyType,
   AlternativePlace,
   CostCategory,
@@ -8,15 +7,18 @@ import type {
   CourseItem,
   CourseItemCost,
   CourseResult,
+  CarRouteResult,
   CongestionRescheduleOption,
   IndoorOutdoor,
   PlacePreference,
   RegionRef,
   Transport,
+  CongestionLevel,
 } from '../assets/types/course'
 import { getMockWeather, weatherRecommendationAdjustment, weatherWarning } from './weatherMockService'
 import { savedCourseMockService } from './savedCourseMockService'
 import { apiRequest } from '../api/backendClient.js'
+import { ApiError } from '../api/errors.js'
 
 const pause = (ms = 650) => new Promise(resolve => setTimeout(resolve, ms))
 const RECOMMENDED_ITEMS_PER_DAY = 3
@@ -317,15 +319,6 @@ function travelMinutes(distanceKm: number, transport: Transport) {
   return Math.max(5, Math.round(distanceKm / speed * 60 + transferMinutes))
 }
 
-const subcategoryLabel: Record<MockPlace['subcategory'], string> = {
-  OREUM: '오름', BEACH: '해변', CAFE: '카페', MARKET: '시장', FOREST: '숲·자연',
-  CULTURE: '문화', CAVE: '동굴', WATERFALL: '폭포', DRIVE: '드라이브',
-}
-const regionLabel: Record<RegionCode, string> = { EAST: '동부', WEST: '서부', SOUTH: '남부', NORTH: '북부' }
-const detailedCategory = (place: MockPlace) => place.category === subcategoryLabel[place.subcategory]
-  ? place.category
-  : `${place.category} · ${subcategoryLabel[place.subcategory]}`
-
 function routeLeg(from: { lat: number; lng: number; island?: boolean }, to: { lat: number; lng: number; island?: boolean }, transport: Transport) {
   if (from.island || to.island) return undefined
   const distanceKm = Math.max(1.2, haversineKm(from, to) * 1.28)
@@ -335,12 +328,16 @@ function routeLeg(from: { lat: number; lng: number; island?: boolean }, to: { la
   }
 }
 
-function accommodationLocation(accommodation?: AccommodationInput) {
+function accommodationLocation(accommodation?: AccommodationInput | null) {
   if (!accommodation) return undefined
   return { lat: accommodation.latitude, lng: accommodation.longitude }
 }
 
-function recalculateDayTravel(day: CourseDay, transport: Transport, accommodation?: AccommodationInput) {
+function recalculateDayTravel(
+  day: CourseDay,
+  transport: Transport,
+  accommodation?: AccommodationInput | null,
+) {
   const fallbackRegion = findPlace(day.items[0]?.place_id ?? 0, day.items[0]?.place_name ?? '')?.region ?? accommodation?.region ?? 'EAST'
   day.items.forEach((item, index) => {
     item.position = index + 1
@@ -419,10 +416,6 @@ function rescheduleCandidates(course: CourseResult, itemId: number): CongestionR
     .sort((a, b) => a.congestion_rate - b.congestion_rate || a.visit_date.localeCompare(b.visit_date) || a.start_time.localeCompare(b.start_time))
     .slice(0, 3)
     .map(({ conflict: _conflict, ...option }) => option)
-}
-
-function replacementCosts(course: CourseResult, item: CourseItem, place: MockPlace) {
-  return [makePlaceCost(item.id + 9000, course.id, item.id, place, place.category, course.people)]
 }
 
 type ReasonCandidate = { key: string; code: CourseItem['recommendation_reason_code']; text: string }
@@ -654,22 +647,86 @@ async function generate(condition: CourseCondition): Promise<CourseResult> {
   }) as CourseResult
 }
 
+export function courseGenerationErrorMessage(error: unknown): string {
+  if (error instanceof ApiError && error.status === 503) {
+    return error.message || 'AI 코스 생성 서버가 일시적으로 혼잡합니다. 잠시 후 다시 시도해 주세요.'
+  }
+  return '코스를 생성하지 못했어요. 다시 시도해 주세요.'
+}
+
+async function updateAccommodation(
+  course: CourseResult,
+  accommodation: AccommodationInput,
+): Promise<AccommodationInput> {
+  return await apiRequest(`/courses/${course.id}/accommodation`, {
+    method: 'PATCH',
+    auth: !course.claim_token,
+    body: {
+      accommodation,
+      ...(course.claim_token ? { claim_token: course.claim_token } : {}),
+    },
+  }) as AccommodationInput
+}
+
+async function getRecommendedAccommodations(
+  course: CourseResult,
+): Promise<import('../assets/types/course').AccommodationRecommendation[]> {
+  const items = await apiRequest(`/courses/${course.id}/accommodations/search`, {
+    method: 'POST',
+    auth: !course.claim_token,
+    body: course.claim_token ? { claim_token: course.claim_token } : {},
+  }) as AccommodationInput[]
+  return items.map(item => ({
+    ...item,
+    recommendation_reason: '현재 코스의 저장된 장소 주변에서 확인한 Kakao 숙박 장소예요.',
+  }))
+}
+
+async function getCarRoute(course: CourseResult): Promise<CarRouteResult> {
+  return await apiRequest(`/courses/${course.id}/routes/car`, {
+    method: 'GET',
+    auth: !course.claim_token && course.status === 'SAVED',
+  }) as CarRouteResult
+}
+
 export const generateMockCourseForTest = generateMockCourse
+
+/** 백엔드 CourseSwapResponse(course/model/CourseSwapResponse.java, snake_case) - 교체된 칸과 이동이 바뀐 다음 칸만 온다 */
+interface CourseSwapResponse {
+  course_id: number
+  average_congestion_rate: number | null
+  congestion_level: CongestionLevel | null
+  congestion_label: string | null
+  message: string | null
+  updated_items: Array<{
+    item_id: number; day_no: number; position: number; visit_date: string
+    place_id: number; place_name: string; category_name: string; image_url: string | null
+    congestion_rate: number | null; congestion_level: CongestionLevel | null; congestion_label: string | null
+    recommendation_reason: string | null; replaced_from_place_id: number | null; replaced_from_place_name: string | null
+    inbound_distance_m: number | null; inbound_travel_minutes: number | null
+  }>
+}
 
 export const courseMockService = {
   generateCourse: (condition: CourseCondition) => generate(condition),
   regenerateCourse: (_condition: CourseCondition): Promise<CourseResult> => Promise.reject(new Error('코스 재생성은 아직 지원되지 않습니다.')),
+  updateAccommodation,
+  getRecommendedAccommodations,
+  getCarRoute,
   applyAccommodationSelection,
   recalculateRouteWithAccommodation: (condition: CourseCondition, accommodation: AccommodationInput) => generateMockCourse({
     ...JSON.parse(JSON.stringify(condition)) as CourseCondition,
     accommodation: { ...accommodation },
   }, 'USER_REGENERATE'),
+  /**
+   * 대안 후보 - 백엔드 GET /places/{place_id}/alternatives (담당: 정동현).
+   * 같은 카테고리, 그 날짜 예보 혼잡 미만, 10km 우선(부족하면 20km), 코스 내 중복 제외, 근거 문구는 서버가 만든다.
+   * 프론트는 사용자의 '피하고 싶은 장소'만 한 번 더 거른다 - 서버는 선호를 모른다.
+   * 그 날짜 예보가 없으면 서버가 3401을 내고 그대로 던진다 - 빈 배열로 뭉개면 '대안이 없다'와 구분이 안 된다.
+   */
   async getAlternativePlaces(course: CourseResult, itemId: number, condition?: CourseCondition): Promise<AlternativePlace[]> {
-    await pause(350)
     const item = course.days.flatMap(day => day.items).find(candidate => candidate.id === itemId)
     if (!item) throw new Error('대안을 찾을 일정을 확인하지 못했습니다.')
-    const currentPlace = findPlace(item.place_id, item.place_name)
-    if (!currentPlace) return []
 
     const avoidedIds = new Set(latestAvoidedPlaceIds)
     const avoidedNames = new Set(latestAvoidedPlaceNames)
@@ -679,115 +736,57 @@ export const courseMockService = {
         if (preference.place_id != null) avoidedIds.add(preference.place_id)
         avoidedNames.add(normalizePlaceName(preference.place_name))
       })
-    const usedIds = new Set(course.days.flatMap(day => day.items).filter(candidate => candidate.id !== itemId).map(candidate => candidate.place_id))
-    const usedNames = new Set(course.days.flatMap(day => day.items).filter(candidate => candidate.id !== itemId).map(candidate => normalizePlaceName(candidate.place_name)))
-    const selectedStyles = new Set(condition?.course_styles.map(style => style.code) ?? [])
-    const preferredRegions = new Set(condition?.course_regions.map(region => region.code) ?? [])
-    const crowdedReplacement = item.congestion_level === 'CROWDED'
-    const targetDay = course.days.find(day => day.items.some(candidate => candidate.id === itemId))
-    const targetIndex = targetDay?.items.findIndex(candidate => candidate.id === itemId) ?? -1
-    const previousPlace = targetIndex > 0 ? findPlace(targetDay!.items[targetIndex - 1].place_id, targetDay!.items[targetIndex - 1].place_name) : undefined
-    const nextItem = targetIndex >= 0 ? targetDay?.items[targetIndex + 1] : undefined
-    const nextPlace = nextItem ? findPlace(nextItem.place_id, nextItem.place_name) : undefined
-    const currentRouteKm = (previousPlace ? haversineKm(previousPlace, currentPlace) : 0) + (nextPlace ? haversineKm(currentPlace, nextPlace) : 0)
+    const exclude = course.days.flatMap(day => day.items).filter(candidate => candidate.id !== itemId).map(candidate => candidate.place_id)
+    const query = new URLSearchParams({ date: item.visit_date, limit: '3' })
+    if (exclude.length) query.set('exclude', exclude.join(','))
 
-    return places
-      .filter(place => place.id !== currentPlace.id && !place.island)
-      .filter(place => place.subcategory === currentPlace.subcategory || (!crowdedReplacement && place.category === currentPlace.category))
-      .filter(place => !crowdedReplacement || place.congestionRate < 35)
-      .filter(place => !avoidedIds.has(place.id) && !avoidedNames.has(normalizePlaceName(place.name)))
-      .filter(place => !usedIds.has(place.id) && !usedNames.has(normalizePlaceName(place.name)))
-      .map(place => {
-        const directDistanceKm = haversineKm(currentPlace, place)
-        const styleMatches = place.styles.filter(style => selectedStyles.has(style)).length
-        const matchedStyle = condition?.course_styles.find(style => place.styles.includes(style.code))
-        const matchedRegion = preferredRegions.has(place.region)
-        const candidateRouteKm = (previousPlace ? haversineKm(previousPlace, place) : 0) + (nextPlace ? haversineKm(place, nextPlace) : 0)
-        const routeDeviationKm = Math.max(0, candidateRouteKm - currentRouteKm)
-        const radiusKm: 10 | 20 | undefined = directDistanceKm <= 10 ? 10 : directDistanceKm <= 20 ? 20 : undefined
-        const score = crowdedReplacement
-          ? (35 - place.congestionRate) * 3 + Math.max(0, 20 - directDistanceKm) * 3
-          : Number(place.subcategory === currentPlace.subcategory) * 8
-            + Number(matchedRegion) * 5
-            + styleMatches * 3
-            + Math.max(0, 35 - place.congestionRate) / 5
-            + Math.max(0, 12 - routeDeviationKm) * 2
-            - directDistanceKm / 5
-        let recommendationReason: string
-        let replacementReason: string
-        if (crowdedReplacement) {
-          recommendationReason = directDistanceKm <= 10
-            ? `혼잡한 기존 장소와 가까운 한산한 ${subcategoryLabel[place.subcategory]} 후보예요.`
-            : `같은 ${subcategoryLabel[place.subcategory]} 중 예상 혼잡도가 낮은 후보예요.`
-          replacementReason = directDistanceKm <= 10
-            ? `혼잡한 기존 장소 대신 가까운 한산한 ${subcategoryLabel[place.subcategory]}를 선택했어요.`
-            : `같은 ${subcategoryLabel[place.subcategory]} 중 예상 혼잡도가 낮은 장소로 변경했어요.`
-        } else if (routeDeviationKm <= 5 && matchedStyle) {
-          recommendationReason = `기존 일정과 이동거리가 비슷하면서 ${matchedStyle.name} 취향과 잘 맞는 장소예요.`
-          replacementReason = `기존 동선을 크게 바꾸지 않으면서 ${matchedStyle.name} 취향과 잘 맞는 장소로 변경했어요.`
-        } else if (matchedRegion && matchedStyle) {
-          recommendationReason = `선호한 ${regionLabel[place.region]} 권역과 ${matchedStyle.name} 여행 스타일에 잘 맞는 후보예요.`
-          replacementReason = `선호한 ${regionLabel[place.region]} 권역과 ${matchedStyle.name} 취향을 고려한 장소로 변경했어요.`
-        } else if (place.subcategory === currentPlace.subcategory && place.congestionRate < 35) {
-          recommendationReason = `같은 ${subcategoryLabel[place.subcategory]} 중 예상 혼잡도가 낮은 후보예요.`
-          replacementReason = `같은 ${subcategoryLabel[place.subcategory]} 중 예상 혼잡도가 낮은 장소로 변경했어요.`
-        } else {
-          recommendationReason = `같은 ${place.category} 계열에서 기존 동선을 크게 벗어나지 않는 후보예요.`
-          replacementReason = `같은 ${place.category} 계열에서 기존 동선을 고려한 장소로 변경했어요.`
-        }
-        return {
-          place_id: place.id,
-          place_name: place.name,
-          category_name: detailedCategory(place),
-          subcategory_name: place.subcategory,
-          image_url: place.image,
-          distance_m: Math.round(directDistanceKm * 1000 / 100) * 100,
-          congestion_rate: place.congestionRate,
-          congestion_level: place.congestionRate < 35 ? 'QUIET' as const : place.congestionRate < 65 ? 'NORMAL' as const : 'CROWDED' as const,
-          recommendation_reason: recommendationReason,
-          replacement_reason: replacementReason,
-          radius_km: radiusKm,
-          score,
-          routeDeviationKm,
-        }
-      })
-      .filter(candidate => crowdedReplacement ? candidate.distance_m <= 20000 : candidate.routeDeviationKm <= 25)
-      .sort((a, b) => crowdedReplacement
-        ? (a.radius_km ?? 20) - (b.radius_km ?? 20) || b.score - a.score || a.distance_m - b.distance_m
-        : b.score - a.score || a.routeDeviationKm - b.routeDeviationKm || a.distance_m - b.distance_m)
-      .slice(0, 3)
-      .map(({ score: _score, routeDeviationKm: _routeDeviationKm, ...candidate }) => candidate)
+    const candidates = await apiRequest(`/places/${item.place_id}/alternatives?${query.toString()}`) as AlternativePlace[]
+    return candidates.filter(candidate => !avoidedIds.has(candidate.place_id) && !avoidedNames.has(normalizePlaceName(candidate.place_name)))
   },
-  async replaceCourseItem(course: CourseResult, itemId: number, alternative: AlternativePlace) {
-    await pause(350)
+  /**
+   * 교체 실행 - 백엔드 POST /courses/{id}/items/{itemId}/swap (담당: 정동현).
+   * 제자리 교체, 중복 검사, 이동 거리·평균 혼잡도 재계산, 권한(샘플 코스 차단·저장 코스 본인 확인)은 서버가 한다.
+   * 응답의 updated_items(교체된 칸 + 이동이 바뀐 다음 칸)만 로컬 코스에 덮어쓴다 - 나머지 일정은 그대로.
+   */
+  async replaceCourseItem(course: CourseResult, itemId: number, alternative: AlternativePlace): Promise<CourseResult> {
     if (latestAvoidedPlaceIds.has(alternative.place_id) || latestAvoidedPlaceNames.has(normalizePlaceName(alternative.place_name))) throw new Error('피하고 싶은 장소는 대안으로 선택할 수 없습니다.')
+    const swap = await apiRequest(`/courses/${course.id}/items/${itemId}/swap`, {
+      method: 'POST',
+      body: { place_id: alternative.place_id },
+      // 저장 코스는 본인만(JWT). 임시(READY) 코스는 생성이 비로그인이라 공개 경로
+      auth: course.status === 'SAVED',
+    }) as CourseSwapResponse
+
     const copy = JSON.parse(JSON.stringify(course)) as CourseResult
-    const day = copy.days.find(candidate => candidate.items.some(item => item.id === itemId))
-    const item = day?.items.find(candidate => candidate.id === itemId)
-    if (!item) throw new Error('교체할 일정을 찾지 못했습니다.')
-    const replacement = findPlace(alternative.place_id, alternative.place_name)
-    if (!replacement) throw new Error('선택한 대안 장소 정보를 찾지 못했습니다.')
-    const isDuplicate = copy.days.flatMap(candidate => candidate.items).some(candidate => candidate.id !== itemId && (candidate.place_id === replacement.id || normalizePlaceName(candidate.place_name) === normalizePlaceName(replacement.name)))
-    if (isDuplicate) throw new Error('현재 코스에 이미 포함된 장소로는 교체할 수 없습니다.')
-    item.replaced_from_place_id = item.place_id
-    item.place_id = replacement.id
-    delete item.source_code
-    delete item.source_place_id
-    item.latitude = replacement.lat
-    item.longitude = replacement.lng
-    item.place_name = replacement.name
-    item.category_name = detailedCategory(replacement)
-    item.image_url = replacement.image
-    item.item_source = 'REPLACEMENT'
-    item.congestion_rate = replacement.congestionRate
-    item.congestion_level = replacement.congestionRate < 35 ? 'QUIET' : replacement.congestionRate < 65 ? 'NORMAL' : 'CROWDED'
-    item.recommendation_reason_code = replacement.congestionRate < 35 ? 'CONGESTION' : 'ROUTE'
-    item.recommendation_reason = alternative.replacement_reason
-    item.operating_hours_warning = item.start_time && item.end_time ? !isWithinOperatingHours(replacement, item.start_time, item.end_time) : undefined
-    applyWeather(item, replacement)
-    item.costs = replacementCosts(copy, item, replacement)
-    recalculateDayTravel(day!, copy.transport, copy.accommodation)
-    return recalc(copy)
+    for (const updated of swap.updated_items) {
+      const item = copy.days.flatMap(day => day.items).find(candidate => candidate.id === updated.item_id)
+      if (!item) continue
+      item.place_id = updated.place_id
+      item.place_name = updated.place_name
+      item.category_name = updated.category_name
+      item.image_url = updated.image_url ?? undefined
+      item.congestion_rate = updated.congestion_rate ?? undefined
+      item.congestion_level = updated.congestion_level ?? undefined
+      item.recommendation_reason = updated.recommendation_reason ?? undefined
+      item.replaced_from_place_id = updated.replaced_from_place_id ?? undefined
+      item.inbound_distance_m = updated.inbound_distance_m ?? undefined
+      item.inbound_travel_minutes = updated.inbound_travel_minutes ?? undefined
+      if (updated.item_id === itemId) {
+        item.item_source = 'REPLACEMENT'
+        item.recommendation_reason_code = 'CONGESTION'
+        // 새 장소의 좌표·출처·실측 비용은 응답에 없다 - 옛 장소 값을 남기지도, 지어내지도 않는다
+        delete item.latitude
+        delete item.longitude
+        delete item.source_code
+        delete item.source_place_id
+        item.costs = []
+      }
+    }
+    // 비용 집계는 서버가 스왑에서 건드리지 않는다(실측 없는 비용을 지어내지 않음) - 로컬에서도 다시 계산하지 않는다
+    if (swap.average_congestion_rate != null) copy.average_congestion_rate = swap.average_congestion_rate
+    // 렌터카 경로는 옛 장소 기준 구간이라 버린다 - 화면이 교체된 장소로 다시 받는다
+    delete copy.car_route
+    return copy
   },
   async getQuieterTimeOptions(course: CourseResult, itemId: number) {
     await pause(250)

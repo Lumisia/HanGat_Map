@@ -56,6 +56,7 @@ public record CourseDetailResponse(
          * 저장하지 않은 임시 코스는 지울 것도 이름 붙일 것도 없어 swappable과 값이 다르다.
          */
         boolean manageable,
+        AccommodationDto accommodation,
         List<DayDto> days
 ) {
 

@@ -1,0 +1,267 @@
+# ────────────────────────── 공통 이름 ──────────────────────────
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Docker Hub 저장소가 공개라면 빈 배열을 유지한다.
+# 비공개 저장소라면 다음과 같이 지정한다.
+#
+# imagePullSecrets:
+#   - name: dockerhub-lumisia
+imagePullSecrets: []
+
+
+# ────────────────────────── 백엔드 ──────────────────────────
+
+backend:
+  replicaCount: 1
+  revisionHistoryLimit: 3
+
+  image:
+    repository: lumisia/hangat-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+
+  # 현재 로컬 PVC와 @Scheduled 배치를 사용하므로
+  # 구버전과 신버전 Pod가 동시에 실행되지 않게 한다.
+  strategy:
+    type: Recreate
+
+  configEnv:
+    SPRING_PROFILES_ACTIVE: "prod"
+    SERVER_PORT: "8080"
+    TZ: "Asia/Seoul"
+
+    JAVA_TOOL_OPTIONS: >-
+      -XX:MaxRAMPercentage=75.0
+      -XX:+ExitOnOutOfMemoryError
+      -Djava.io.tmpdir=/tmp
+
+    # MAIL 관련
+    MAIL_HOST: "smtp.resend.com"
+    MAIL_PORT: "587"
+    MAIL_USERNAME: "resend"
+    MAIL_FROM: "no-reply@hangatjeju.com"
+
+    # 프론트 백엔드 및 CORS 설정
+    FRONTEND_URL: "https://hangatjeju.com"
+    BACKEND_URL: "https://api.hangatjeju.com"
+    CORS_ALLOWED_ORIGINS: "https://hangatjeju.com,https://swagger.hangatjeju.com"
+
+    # 외부 API 설정
+    TOUR_API_BASE_URL: "https://apis.data.go.kr/B551011/KorService2/areaBasedList2"
+    CONGESTION_API_BASE_URL: "https://apis.data.go.kr/B551011/TatsCnctrRateService/tatsCnctrRatedList"
+
+    APP_UPLOAD_DIR: "/app/uploads/reviews"
+
+    MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+    MANAGEMENT_ENDPOINT_HEALTH_GROUP_READINESS_INCLUDE: "readinessState,db"
+
+  # 실제 값은 Jenkins의 hangat-values-private 파일이 덮어쓴다.
+  secretEnv:
+    DB_USER: ""
+    DB_PASS: ""
+
+    JWT_SECRET: ""
+    APP_AUTH_CODE_HMAC_SECRET: ""
+
+    MAIL_PASSWORD: ""
+
+    GOOGLE_CLIENT_ID: ""
+    GOOGLE_CLIENT_SECRET: ""
+
+    KAKAO_CLIENT_ID: ""
+    KAKAO_CLIENT_SECRET: ""
+
+    SERVICE_KEY: ""
+    TOUR_API_SERVICE_KEY: ""
+
+    # 선택 기능이다. 사용하지 않는 동안 빈 문자열을 허용한다.
+    GEMINI_API_KEY: ""
+    KAKAO_LOCAL_REST_KEY: ""
+
+  persistence:
+    enabled: true
+    existingClaim: ""
+    storageClassName: ""
+    accessMode: ReadWriteOnce
+    size: 5Gi
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1536Mi
+
+  probes:
+    startup:
+      enabled: true
+      spec:
+        httpGet:
+          path: /actuator/health/liveness
+          port: http
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 30
+
+    liveness:
+      enabled: true
+      spec:
+        httpGet:
+          path: /actuator/health/liveness
+          port: http
+        initialDelaySeconds: 10
+        periodSeconds: 15
+        timeoutSeconds: 3
+        failureThreshold: 3
+
+    readiness:
+      enabled: true
+      spec:
+        httpGet:
+          path: /actuator/health/readiness
+          port: http
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+
+  tmpSizeLimit: 256Mi
+
+
+# ────────────────────────── 프론트엔드 ──────────────────────────
+
+frontend:
+  replicaCount: 1
+  revisionHistoryLimit: 3
+
+  image:
+    repository: lumisia/hangat-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+    runAsGroup: 101
+    fsGroup: 101
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+
+    # nginx-unprivileged 초기 스크립트 호환성을 위해 우선 false로 둔다.
+    # 실제 OCI 기동 확인 후 true 전환할 수 있다.
+    readOnlyRootFilesystem: false
+
+    capabilities:
+      drop:
+        - ALL
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+
+  probes:
+    startup:
+      enabled: true
+      spec:
+        httpGet:
+          path: /
+          port: http
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 12
+
+    liveness:
+      enabled: true
+      spec:
+        httpGet:
+          path: /
+          port: http
+        initialDelaySeconds: 5
+        periodSeconds: 20
+        timeoutSeconds: 3
+        failureThreshold: 3
+
+    readiness:
+      enabled: true
+      spec:
+        httpGet:
+          path: /
+          port: http
+        initialDelaySeconds: 2
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 3
+
+
+# ────────────────────────── Ingress ──────────────────────────
+
+ingress:
+  enabled: true
+
+  className: nginx
+  forceSslRedirect: "true"
+
+  tls:
+    enabled: false
+    secretName: hangat-tls
+
+  # 대표 서비스 도메인
+  web:
+    host: hangatjeju.com
+
+  # 백엔드 API 도메인
+  api:
+    host: api.hangatjeju.com
+
+    # Spring max-request-size가 26MB이므로 NGINX는 조금 더 크게 둔다.
+    proxyBodySize: 30m
+    proxyReadTimeout: "180"
+    proxySendTimeout: "180"
+
+  # API 문서 도메인
+  swagger:
+    enabled: false
+    host: swagger.hangatjeju.com

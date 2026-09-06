@@ -302,6 +302,20 @@ async function onLogout () {
   .mobile-menu-logout { color: var(--busy); background: var(--busy-bg); }
 }
 
+/*
+  좁은 데스크톱에서는 모바일 메뉴 대신 압축한 상단 메뉴를 유지한다.
+  주요 탐색을 우선하기 위해 모바일 미리보기와 계정 이름만 감춘다.
+*/
+@media (max-width: 768px) and (hover: hover) and (pointer: fine) {
+  .mobile-preview-button { display: none; }
+  .account-actions { display: contents; }
+  .mobile-menu-button,
+  .mobile-header-menu { display: none; }
+  .who { padding: 6px; }
+  .who b { display: none; }
+  .ghost { padding: 8px 10px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mobile-menu-button span { transition: none; }
 }

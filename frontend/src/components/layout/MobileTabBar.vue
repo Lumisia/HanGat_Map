@@ -108,4 +108,12 @@ const isOn = computed(() => tab => isTabActive(tab, route.path))
 @media (max-width: 768px) {
   .mtabbar { display: flex; }
 }
+
+/*
+  개발자 도구를 옆에 열어 뷰포트만 좁아진 데스크톱은 모바일이 아니다.
+  마우스처럼 정밀한 포인터와 hover가 있으면 하단 탭을 다시 숨긴다.
+*/
+@media (max-width: 768px) and (hover: hover) and (pointer: fine) {
+  .mtabbar { display: none; }
+}
 </style>

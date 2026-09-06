@@ -32,9 +32,12 @@ import org.springframework.web.client.ResourceAccessException;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.SocketTimeoutException;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -42,6 +45,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.ExpectedCount.once;
+import static org.springframework.test.web.client.ExpectedCount.times;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
@@ -290,7 +294,37 @@ class GeminiCourseAiProviderTest {
     void mapsServerErrorWithSafeDiagnostics() {
         assertFailureForStatus(
                 500, "INTERNAL", "BACKEND_ERROR",
-                CourseAiFailureType.PROVIDER_ERROR);
+                CourseAiFailureType.TEMPORARILY_UNAVAILABLE);
+    }
+
+    @Test
+    void retriesTransientStatusesAndReturnsTheSuccessfulResult() {
+        for (int status : List.of(429, 502, 503, 504)) {
+            assertRetriesThenSucceeds(status);
+        }
+    }
+
+    @Test
+    void retriesReadTimeoutOnlyOnceThenStops() {
+        RestClient restClient = mock(RestClient.class);
+        when(restClient.post()).thenThrow(new ResourceAccessException(
+                "sensitive network detail", new SocketTimeoutException("Read timed out")));
+
+        assertThatThrownBy(() -> provider(restClient, "test-secret").generate(input()))
+                .isInstanceOfSatisfying(CourseAiException.class, exception ->
+                        assertThat(exception.getFailureType())
+                                .isEqualTo(CourseAiFailureType.TEMPORARILY_UNAVAILABLE));
+        org.mockito.Mockito.verify(restClient, org.mockito.Mockito.times(2)).post();
+    }
+
+    @Test
+    void retriesReadTimeoutAndReturnsTheSuccessfulResult() {
+        assertNetworkFailureThenSucceeds(new SocketTimeoutException("Read timed out"));
+    }
+
+    @Test
+    void retriesConnectionTimeoutAndReturnsTheSuccessfulResult() {
+        assertNetworkFailureThenSucceeds(new SocketTimeoutException("connect timed out"));
     }
 
     @Test
@@ -332,7 +366,8 @@ class GeminiCourseAiProviderTest {
         RestClient.Builder builder = RestClient.builder().baseUrl("http://gemini.test/v1beta");
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         GeminiCourseAiProvider provider = provider(builder.build(), "test-secret");
-        server.expect(once(), requestTo("http://gemini.test/v1beta/models/gemini-test:generateContent"))
+        server.expect(once(),
+                        requestTo("http://gemini.test/v1beta/models/gemini-test:generateContent"))
                 .andRespond(withSuccess("", MediaType.APPLICATION_JSON));
 
         assertThatThrownBy(() -> provider.generate(input()))
@@ -355,7 +390,8 @@ class GeminiCourseAiProviderTest {
         RestClient.Builder builder = RestClient.builder().baseUrl("http://gemini.test/v1beta");
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         GeminiCourseAiProvider provider = provider(builder.build(), "test-secret");
-        server.expect(once(), requestTo("http://gemini.test/v1beta/models/gemini-test:generateContent"))
+        server.expect(once(),
+                        requestTo("http://gemini.test/v1beta/models/gemini-test:generateContent"))
                 .andRespond(withSuccess("<html>sensitive-body</html>", MediaType.TEXT_HTML));
 
         assertThatThrownBy(() -> provider.generate(input()))
@@ -478,7 +514,7 @@ class GeminiCourseAiProviderTest {
         assertThatThrownBy(() -> provider(restClient, "test-secret").generate(input()))
                 .isInstanceOfSatisfying(CourseAiException.class, exception -> {
                     assertThat(exception.getFailureType())
-                            .isEqualTo(CourseAiFailureType.PROVIDER_ERROR);
+                            .isEqualTo(CourseAiFailureType.TEMPORARILY_UNAVAILABLE);
                     assertThat(exception.getMessage())
                             .contains("PHASE=HTTP_EXCHANGE")
                             .contains("NETWORK=READ_TIMEOUT")
@@ -516,7 +552,10 @@ class GeminiCourseAiProviderTest {
         RestClient.Builder builder = RestClient.builder().baseUrl("http://gemini.test/v1beta");
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         GeminiCourseAiProvider provider = provider(builder.build(), "test-secret");
-        server.expect(once(), requestTo("http://gemini.test/v1beta/models/gemini-test:generateContent"))
+        int attempts = status == 408 || status == 429 || status == 500
+                || status == 502 || status == 503 || status == 504 ? 3 : 1;
+        server.expect(times(attempts),
+                        requestTo("http://gemini.test/v1beta/models/gemini-test:generateContent"))
                 .andRespond(withStatus(org.springframework.http.HttpStatus.valueOf(status))
                         .contentType(MediaType.APPLICATION_JSON)
                         .body("""
@@ -573,7 +612,60 @@ class GeminiCourseAiProviderTest {
         GeminiProperties properties = new GeminiProperties(
                 "http://gemini.test/v1beta", apiKey, "gemini-test",
                 Duration.ofSeconds(1), Duration.ofSeconds(1));
-        return new GeminiCourseAiProvider(restClient, properties, prompt, objectMapper);
+        return new GeminiCourseAiProvider(
+                restClient, properties, prompt, objectMapper, noSleepRetryPolicy());
+    }
+
+    private GeminiRetryPolicy noSleepRetryPolicy() {
+        return new GeminiRetryPolicy(
+                duration -> { },
+                () -> 0L,
+                Clock.fixed(Instant.parse("2026-09-03T00:00:00Z"), ZoneOffset.UTC));
+    }
+
+    private void assertRetriesThenSucceeds(int status) {
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://gemini.test/v1beta");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        GeminiCourseAiProvider provider = provider(builder.build(), "test-secret");
+        String endpoint = "http://gemini.test/v1beta/models/gemini-test:generateContent";
+
+        server.expect(once(), requestTo(endpoint))
+                .andRespond(withStatus(org.springframework.http.HttpStatus.valueOf(status))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"error\":{\"code\":" + status + "}}"));
+        server.expect(once(), requestTo(endpoint))
+                .andRespond(withSuccess(successEnvelope(), MediaType.APPLICATION_JSON));
+
+        CourseAiResultDto result = provider.generate(input());
+
+        assertThat(result.contractVersion()).isEqualTo("1.0");
+        server.verify();
+    }
+
+    private void assertNetworkFailureThenSucceeds(IOException failure) {
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://gemini.test/v1beta");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        GeminiCourseAiProvider provider = provider(builder.build(), "test-secret");
+        String endpoint = "http://gemini.test/v1beta/models/gemini-test:generateContent";
+
+        server.expect(once(), requestTo(endpoint)).andRespond(request -> {
+            throw failure;
+        });
+        server.expect(once(), requestTo(endpoint))
+                .andRespond(withSuccess(successEnvelope(), MediaType.APPLICATION_JSON));
+
+        CourseAiResultDto result = provider.generate(input());
+
+        assertThat(result.contractVersion()).isEqualTo("1.0");
+        server.verify();
+    }
+
+    private String successEnvelope() {
+        return """
+                {"candidates":[{"content":{"parts":[{
+                "text":"{\\\"contractVersion\\\":\\\"1.0\\\",\\\"days\\\":[]}"
+                }]}}]}
+                """;
     }
 
     private CourseAiInputDto input() {

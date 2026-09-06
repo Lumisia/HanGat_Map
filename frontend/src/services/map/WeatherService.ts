@@ -19,6 +19,8 @@ export interface DayWeather {
   t: number
   /** 최저기온 */
   tmin: number
+  /** 강수확률(%). 백엔드가 안 주면 null - 카드가 30% 이상일 때만 표시한다 */
+  rp: number | null
 }
 
 /** 백엔드 DailyWeather (domain/weather/model/DailyWeather.java 와 동일 모양) */
@@ -55,7 +57,7 @@ export const WeatherService = {
         const k = skyToKind(r.sky)
         // 기온이나 하늘이 빠진 날은 버린다 - 반쪽 정보로 그리면 NaN°가 뜬다
         if (k == null || r.maxTemp == null || r.minTemp == null) continue
-        next[r.date] = { k, rain: k === '비' ? 1 : 0, t: r.maxTemp, tmin: r.minTemp }
+        next[r.date] = { k, rain: k === '비' ? 1 : 0, t: r.maxTemp, tmin: r.minTemp, rp: r.rainProb ?? null }
       }
       cache = next
       return Object.keys(next).length > 0

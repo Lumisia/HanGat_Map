@@ -8,9 +8,11 @@
  * 그쪽이 처리한다.
  */
 import { apiGet } from './apiClient'
-import { apiRequest } from '../api/backendClient'
+import { apiRequest, getBackendUserId } from '../api/backendClient'
 import { homeCourses } from '../data/courses'
 import type { CongestionLevel } from '../assets/types'
+import type { AlternativePlace } from '../assets/types/course'
+import type { AccommodationInput } from '../assets/types/course'
 
 /** 화면이 그리는 코스 카드 한 장 - 메인 추천과 저장 목록이 같은 모양을 쓴다(백엔드 계약도 동일). */
 export interface CourseCard {
@@ -122,6 +124,7 @@ export interface CourseDetail {
   swappable: boolean
   /** 이름 변경·삭제를 할 수 있는지 */
   manageable: boolean
+  accommodation: AccommodationInput | null
   days: CourseDetailDay[]
 }
 
@@ -140,6 +143,7 @@ interface BackendCourseDetail {
   planned_average_congestion_rate: number | null
   swappable: boolean
   manageable: boolean
+  accommodation: AccommodationInput | null
   days: Array<{
     day_no: number
     visit_date: string
@@ -164,6 +168,20 @@ interface BackendCourseDetail {
       inbound_travel_minutes: number | null
     }>
   }>
+}
+
+/** 교체 결과 요약 - 화면은 상세를 다시 읽으므로 토스트에 쓸 값만 */
+export interface SwapSummary {
+  averageRate: number | null
+  levelLabel: string | null
+  message: string | null
+}
+
+/** 백엔드 CourseSwapResponse(course/model/CourseSwapResponse.java) 중 이 화면이 쓰는 필드 */
+interface BackendSwap {
+  average_congestion_rate: number | null
+  congestion_label: string | null
+  message: string | null
 }
 
 const won = (value: number) => value.toLocaleString('ko-KR')
@@ -256,13 +274,40 @@ export const CourseService = {
   },
 
   /**
+   * 일정 한 칸의 대안 후보 - GET /places/{placeId}/alternatives (담당 정동현).
+   * 같은 카테고리·그 날짜 예보 혼잡 미만·10km 우선(부족하면 20km)·코스 내 중복 제외는 서버가 한다.
+   * apiGet은 4xx 본문을 읽지 않아 코드를 잃으므로 apiRequest를 쓴다 - 그 날짜 예보가 없으면 ApiError(3401)가 온다.
+   */
+  async getAlternatives (placeId: number, visitDate: string, excludeIds: number[]): Promise<AlternativePlace[]> {
+    const query = new URLSearchParams({ date: visitDate, limit: '3' })
+    if (excludeIds.length) query.set('exclude', excludeIds.join(','))
+    return await apiRequest(`/places/${placeId}/alternatives?${query.toString()}`) as AlternativePlace[]
+  },
+
+  /**
+   * 교체 실행 - POST /courses/{id}/items/{itemId}/swap. 제자리 교체·중복 검사·이동·평균 재계산은 서버.
+   * 저장 코스는 본인만 바꿀 수 있어 JWT를 보내고(owned), 임시 코스는 공개 경로다.
+   */
+  async swapItem (courseId: string, itemId: number, placeId: number, owned: boolean): Promise<SwapSummary> {
+    const body = await apiRequest(`/courses/${courseId}/items/${itemId}/swap`, {
+      method: 'POST',
+      body: { place_id: placeId },
+      auth: owned,
+    }) as BackendSwap
+    return { averageRate: body.average_congestion_rate, levelLabel: body.congestion_label, message: body.message }
+  },
+
+  /**
    * 코스 상세. 숫자 id만 백엔드에 묻는다 - 목업 코스는 'sample-aewol' 같은 문자열 id라
    * 전환기 동안 두 경로가 공존한다.
+   *
+   * 로그인돼 있으면 JWT를 붙인다 - 소유자가 있는 저장 코스는 본인 확인(3307)을 통과해야 열리고,
+   * 그래야 swappable/manageable이 참이 되어 교체·이름 변경이 가능하다. 비로그인은 공개 경로.
    */
   async getCourseDetail (id: string): Promise<CourseDetail | null> {
     if (!/^\d+$/.test(id)) return null
     try {
-      const row = await apiGet<BackendCourseDetail>(`/courses/${id}`)
+      const row = await apiRequest(`/courses/${id}`, { auth: getBackendUserId() != null }) as BackendCourseDetail
       return {
         id: String(row.id),
         title: row.title,
@@ -278,6 +323,7 @@ export const CourseService = {
         budgetLabel: budgetLabelOf(row.estimated_cost_min, row.estimated_cost_max),
         swappable: row.swappable,
         manageable: row.manageable,
+        accommodation: row.accommodation,
         days: row.days.map(day => ({
           dayNo: day.day_no,
           visitDate: day.visit_date,

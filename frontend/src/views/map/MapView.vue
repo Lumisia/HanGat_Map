@@ -7,7 +7,7 @@ import DatePicker from '@/components/map/DatePicker.vue'
 import PlaceDetail from '@/components/map/PlaceDetail.vue'
 import CoursePanel from '@/components/map/CoursePanel.vue'
 import PhotoLightbox from '@/components/map/PhotoLightbox.vue'
-import { state, toast, loadPlaces } from '@/stores/mapStore'
+import { state, toast, loadPlaces, findPlaceById } from '@/stores/mapStore'
 
 import { refreshCourse, courseFromNames } from '@/utils/course'
 import { at, iso, D0, FORECAST_DAYS } from '@/utils/date'
@@ -34,11 +34,24 @@ function openPlace(nameOrSpot) {
 }
 const closeDetail = () => { state.sel = null }
 
+/* 열린 장소를 URL에 반영한다(?place=id) — 링크 복사·새로고침·공유가 이 값으로 복원된다.
+   다른 파라미터(?course= 등)는 건드리지 않는다. 목업 장소는 id가 없어 쓰지 않는다 */
+function syncPlaceURL() {
+  const q = new URLSearchParams(location.search)
+  q.delete('placeId')   // 구형 파라미터는 place 로 정규화한다 - 남기면 닫아도 새로고침에 되살아난다
+  if (state.sel?.id != null) q.set('place', state.sel.id)
+  else q.delete('place')
+  const qs = q.toString()
+  history.replaceState(null, '', qs ? '?' + qs : location.pathname)
+}
+watch(() => state.sel, syncPlaceURL)
+
 function toggleCourse() {
   if (state.course) {
     state.course = null
     state.courseDay = 'all'
     history.replaceState(null, '', location.pathname)
+    syncPlaceURL()   // 코스 URL을 지워도 열려 있는 장소는 남긴다
     return
   }
   // 샘플 생성기 대신 실 기능으로 안내한다 - 가짜 코스를 화면에 올리지 않는다
@@ -114,12 +127,24 @@ watch(() => state.di, () => {
   }
 })
 
+/** ?place=(공유 링크·마이페이지) 와 ?placeId=(장소 상세 페이지 링크) 둘 다 받는다 */
+async function openPlaceFromURL() {
+  const raw = route.query.place ?? route.query.placeId
+  if (!/^\d+$/.test(raw ?? '')) return
+  const p = await findPlaceById(+raw)
+  if (p) openPlace(p)
+  else toast('공유받은 장소를 찾지 못했어요')
+}
+
 onMounted(async () => {
   // 장소·예보를 먼저 받아야 URL의 ?place= 로 들어온 장소를 찾을 수 있다
   await loadPlaces()
-  if (route.query.course === 'ai' && loadAiCourse()) return
-  if (/^\d+$/.test(route.query.course ?? '') && await loadSavedCourse(route.query.course)) return
-  loadFromURL()
+  let courseDrawn = false
+  if (route.query.course === 'ai') courseDrawn = loadAiCourse()
+  if (!courseDrawn && /^\d+$/.test(route.query.course ?? '')) courseDrawn = await loadSavedCourse(route.query.course)
+  if (!courseDrawn) loadFromURL()
+  // 코스와 장소가 함께 온 링크도 있다(코스를 보다 장소를 열고 공유) - 코스를 그린 뒤 장소를 연다
+  await openPlaceFromURL()
 })
 </script>
 

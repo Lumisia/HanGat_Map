@@ -125,10 +125,11 @@ function toggleCourse() {
         {{ state.course ? '코스 지우기' : 'AI 코스 만들기' }}
       </button>
 
+      <!-- 도트는 핀과 같은 면색(-st), 글자는 가독용 진한 톤 - 주황 글자는 흰 배경에서 못 읽는다 -->
       <div class="cta-leg">
-        <span style="color:var(--calm)"><i class="dot" style="background:var(--calm)"></i>한산</span>
-        <span style="color:var(--mid)"><i class="dot" style="background:var(--mid)"></i>보통</span>
-        <span style="color:var(--busy)"><i class="dot" style="background:var(--busy)"></i>혼잡</span>
+        <span style="color:var(--calm)"><i class="dot" style="background:var(--calm-st)"></i>한산</span>
+        <span style="color:var(--mid)"><i class="dot" style="background:var(--mid-st)"></i>보통</span>
+        <span style="color:var(--busy)"><i class="dot" style="background:var(--busy-st)"></i>혼잡</span>
         <span style="color:var(--tx3)"><i class="dot" style="background:var(--tx3)"></i>정보 없음</span>
       </div>
     </div>

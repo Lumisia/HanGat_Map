@@ -41,6 +41,7 @@ public class CourseService {
     public CourseResponseDto createCourse(CourseRequestDto request) {
         PreparedCourse prepared = prepareCourse(request);
         CourseAiResultDto result = courseAiGenerationService.generate(prepared.input());
+        result = CourseVisitOrderOptimizer.optimize(request, prepared.facts(), result);
         CoursePersistenceResult persistence = coursePersistenceService.persist(
                 request,
                 prepared.facts(),
@@ -109,6 +110,12 @@ public class CourseService {
 
         List<CourseCandidateShortlistService.ShortlistedPlace> shortlistedPlaces =
                 courseCandidateShortlistService.select(request, tourPlaces);
+
+        if (shortlistedPlaces.isEmpty() && (coursePlacePreferences == null
+                || coursePlacePreferences.stream().noneMatch(p -> p != null
+                && p.getPreferenceType() == PreferenceType.WANT))) {
+            throw new IllegalArgumentException("선택한 권역에서 일정을 구성할 수 있는 장소가 없습니다.");
+        }
 
         for (CourseCandidateShortlistService.ShortlistedPlace shortlisted : shortlistedPlaces) {
             TourPlaceDto place = shortlisted.place();

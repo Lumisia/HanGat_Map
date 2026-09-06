@@ -57,7 +57,7 @@ const counts = computed(() => {
 const total = computed(() => (counts.value.calm + counts.value.mid + counts.value.busy) || 1)
 const myId = computed(() => ReviewApiService.myUserId())
 
-const dateOf = iso => { const d = new Date(iso); return `${d.getMonth() + 1}/${d.getDate()}` }
+const dateOf = iso => { const d = new Date(iso); return `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}` }
 
 /* ── 작성 ── */
 const star = ref(0)
@@ -135,7 +135,7 @@ async function removeReview (r) {
 
     <div class="rv-c">
       <button v-for="c in ['calm', 'mid', 'busy']" :key="c" :class="[c, { on: crowdVote === c }]"
-        @click="crowdVote = crowdVote === c ? '' : c">{{ CROWD_KO[c] }}했어요</button>
+        @click="crowdVote = crowdVote === c ? '' : c">{{ CROWD_KO[c] }}</button>
     </div>
 
     <div class="rv-phrow">
@@ -173,9 +173,9 @@ async function removeReview (r) {
 
       <div v-for="r in items" :key="r.id" class="rv-i">
         <div class="rv-h">
-          <span class="rv-av">여</span>
-          <!-- 닉네임은 백엔드 users join 후 - 지금은 익명 표기 -->
-          <span class="rv-nm">여행자{{ r.userId }}</span>
+          <span class="rv-av">{{ (r.nickname ?? '여')[0] }}</span>
+          <!-- 탈퇴 등으로 닉네임이 없으면(null) 익명 표기로 대체한다 -->
+          <span class="rv-nm">{{ r.nickname ?? `여행자${r.userId}` }}</span>
           <span class="rv-dt">{{ dateOf(r.createdAt) }} 작성</span>
           <button v-if="myId === r.userId" class="rv-del" aria-label="내 후기 삭제"
             @click="removeReview(r)">삭제</button>

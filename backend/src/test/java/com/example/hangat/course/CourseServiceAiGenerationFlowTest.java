@@ -1,6 +1,8 @@
 package com.example.hangat.course;
 
 import com.example.hangat.course.ai.CourseAiGenerationService;
+import com.example.hangat.course.ai.CourseAiException;
+import com.example.hangat.course.ai.CourseAiFailureType;
 import com.example.hangat.course.ai.CourseAiResultDto;
 import com.example.hangat.course.ai.CourseAiResultValidator;
 import com.example.hangat.course.model.CongestionDto;
@@ -27,8 +29,10 @@ import java.time.LocalTime;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.any;
 
@@ -121,6 +125,34 @@ class CourseServiceAiGenerationFlowTest {
         assertThat(response.days().get(0).items().get(0).placeName()).isEqualTo("만장굴");
         assertThat(response.days().get(0).items().get(0).recommendationReason())
                 .isEqualTo("한글 추천 이유");
+    }
+
+    @Test
+    void exhaustedProviderFailureDoesNotStartCoursePersistence() throws Exception {
+        CourseAiGenerationService generationService = mock(CourseAiGenerationService.class);
+        when(generationService.generate(any())).thenThrow(new CourseAiException(
+                CourseAiFailureType.TEMPORARILY_UNAVAILABLE,
+                "Gemini transient attempts exhausted"));
+        CoursePersistenceService persistenceService = mock(CoursePersistenceService.class);
+        CourseBudgetService budgetService = mock(CourseBudgetService.class);
+        CourseService service = new CourseService(
+                new StubTourApiService(),
+                new StubCongestionApiService(),
+                new CourseCandidateShortlistService(),
+                new CourseAiPreparationService(
+                        new CourseAiInputAssembler(),
+                        new CourseTravelService(new StraightLineDistanceCalculator()),
+                        Optional.empty()),
+                generationService,
+                persistenceService,
+                budgetService,
+                new CourseResponseAssembler());
+
+        assertThatThrownBy(() -> service.createCourse(request()))
+                .isInstanceOfSatisfying(CourseAiException.class, exception ->
+                        assertThat(exception.getFailureType())
+                                .isEqualTo(CourseAiFailureType.TEMPORARILY_UNAVAILABLE));
+        verifyNoInteractions(persistenceService, budgetService);
     }
 
     private CourseRequestDto request() throws Exception {

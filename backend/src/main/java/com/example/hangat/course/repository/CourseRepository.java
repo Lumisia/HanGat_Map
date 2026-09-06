@@ -25,6 +25,18 @@ public interface CourseRepository extends JpaRepository<Course, Long> {
     @Query("select course from Course course where course.id = :courseId")
     Optional<Course> findByIdForClaim(@Param("courseId") Long courseId);
 
+    /** 상세 응답에서 선택 숙소를 transaction 안에서 한 번에 복원한다. */
+    @Query("""
+            select course from Course course
+            left join fetch course.accommodationSourceMapping mapping
+            left join fetch mapping.source
+            left join fetch mapping.place place
+            left join fetch place.region
+            left join fetch place.primaryCategory
+            where course.id = :courseId
+            """)
+    Optional<Course> findByIdWithAccommodation(@Param("courseId") Long courseId);
+
     /**
      * 저장 코스 목록(MY_001). 상태를 조건으로 받는 이유: 같은 화면이 DELETED를 제외해야 하고,
      * 논리 삭제라 "userId만으로 전부"를 주는 메서드는 사고 나기 쉽다 - 항상 SAVED를 명시하게 한다.

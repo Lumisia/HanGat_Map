@@ -56,9 +56,10 @@
 
   /* 혼잡 3단계(팀 통일 2026-08-31) - utils/congestion.ts, 백엔드 map CongestionLevel 과 짝
      QUIET <40 / NORMAL <70 / CROWDED >=70 */
-  --quiet:#2e9e6f;
-  --normal:#e3b341;
-  --crowded:#e77c32;
+  /* 지도 핀(정의서 MAP-01: 민트/앰버/레드)과 같은 값 - 범례·바가 핀과 다른 색이면 지도를 못 읽는다 (2026-09-03 통일) */
+  --quiet:#00b894;
+  --normal:#ff9500;
+  --crowded:#f4364c;
 
   --shadow:0 18px 50px rgba(22,60,69,.10);
 
@@ -113,6 +114,7 @@
      A 헤더는 80px, 이후경님 hangat.css 는 58px 를 하드코딩했다.
      지도가 calc(100% - 58px) 로 높이를 잡아 어긋나던 것을 한 곳으로 모았다. */
   --nav-h:80px;
+  --mobile-tabbar-h:0px;
 
   /* ══ 4) 그림자 · 기타 ════════════════════════════════════ */
   --sh:var(--shadow);
@@ -127,6 +129,22 @@
   --hero-veil:linear-gradient(to top, rgba(0,0,0,.55) 0%, rgba(0,0,0,.12) 45%, transparent 100%);
 
   color-scheme:light;
+}
+
+/* 모바일 앱 셸 높이. 홈 인디케이터까지 포함해 지도·회원 화면이 메뉴에 가리지 않게 한다. */
+@media(max-width:768px){
+  :root{
+    --nav-h:60px;
+    --mobile-tabbar-h:calc(56px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* 폭만 좁아진 데스크톱은 상단 헤더를 유지하고 하단 탭 공간을 만들지 않는다. */
+@media(max-width:768px) and (hover:hover) and (pointer:fine){
+  :root{
+    --nav-h:80px;
+    --mobile-tabbar-h:0px;
+  }
 }
 
 /* ══ 정동현 화면 전용 리스킨 토큰 (Toss풍) ═════════════════
@@ -178,8 +196,8 @@ html.skin-toss{
     --course-busy:#ff9299;
     --course-busy-bg:#552d32;
     --quiet:#4fc48f;
-    --normal:#ffc861;
-    --crowded:#ff9d5c;
+    --normal:#ffab4d;
+    --crowded:#ff7b86;
     --shadow:0 1px 3px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.5);
 
     /* 별칭 중 원천으로 못 만드는 파생값만 여기서 덮는다 */
@@ -239,8 +257,8 @@ html.skin-toss{
   --course-busy:#ff9299;
   --course-busy-bg:#552d32;
   --quiet:#4fc48f;
-  --normal:#ffc861;
-  --crowded:#ff9d5c;
+  --normal:#ffab4d;
+  --crowded:#ff7b86;
   --shadow:0 1px 3px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.5);
 
   --bg:#202a30;

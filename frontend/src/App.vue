@@ -6,13 +6,14 @@
  * 지도(풀블리드)와 회원 화면(껍데기 없음)이 들어오면서 뼈대가 3종이 됐고,
  * 화면별 구성은 components/layout/으로 옮겼다.
  *
- * ToastHost 는 레이아웃과 무관하게 항상 떠 있어야 해서 여기 둔다.
+ * MobileTabBar 와 ToastHost 는 레이아웃과 무관하게 항상 유지돼야 해서 여기 둔다.
  */
 import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import DefaultLayout from './components/layout/DefaultLayout.vue'
 import BareLayout from './components/layout/BareLayout.vue'
 import MapLayout from './components/layout/MapLayout.vue'
+import MobileTabBar from './components/layout/MobileTabBar.vue'
 import ToastHost from './components/common/ToastHost.vue'
 
 const route = useRoute()
@@ -23,7 +24,6 @@ const layout = computed(() => LAYOUTS[route.meta?.layout] || DefaultLayout)
 
 /** DefaultLayout 만 쓰는 옵션. 다른 레이아웃에 넘어가도 무시된다 */
 const layoutProps = computed(() => ({
-  footer: !!route.meta?.footer,
   compactHeader: !!route.meta?.compactHeader,
   contentStyles: route.meta?.styleScope === 'content'
 }))
@@ -51,5 +51,6 @@ watch(() => route.meta?.skin, skin => {
     </RouterView>
   </component>
 
+  <MobileTabBar />
   <ToastHost />
 </template>

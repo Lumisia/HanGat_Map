@@ -14,7 +14,6 @@ import { useAuthStore } from '../stores/auth.js'
                   정동현님 리스킨(assets/styles.css 하단)이 그 화면에만 걸린다 —
                   전역으로 두면 AI코스 화면의 버튼·입력·패널까지 바뀐다
     styleScope    'content' 면 DefaultLayout 안의 콘텐츠 전용 CSS를 적용한다
-    footer        true 면 DefaultLayout 이 푸터를 그린다
     compactHeader DefaultLayout → AppHeader 로 넘어가는 축약 플래그 (공유 화면용)
     requiresAuth  로그인 필요. **없으면 공개**가 기본이다 (요구사항 USER_001:
                   비회원도 지도·코스 생성이 가능해야 한다)
@@ -23,8 +22,8 @@ import { useAuthStore } from '../stores/auth.js'
 */
 export const routes = [
   /* ── 메인 · 코스 만들기 ── */
-  { path: '/', name: 'home', component: () => import('../views/home/HomeView.vue'), meta: { footer: true, skin: 'toss', styleScope: 'content', title: '메인' } },
-  { path: '/ai-course', name: 'ai-course', component: () => import('../views/ai-course/AiCourseView.vue'), meta: { footer: true, styleScope: 'content', title: 'AI 코스' } },
+  { path: '/', name: 'home', component: () => import('../views/home/HomeView.vue'), meta: { skin: 'toss', styleScope: 'content', title: '메인' } },
+  { path: '/ai-course', name: 'ai-course', component: () => import('../views/ai-course/AiCourseView.vue'), meta: { styleScope: 'content', title: 'AI 코스' } },
   { path: '/travel/search', name: 'travel-search', component: () => import('../views/ai-course/TravelSearchView.vue'), meta: { requiresAuth: true, styleScope: 'content', title: '여행 조건' } },
   { path: '/recommendation', name: 'recommendation', component: () => import('../views/ai-course/RecommendationView.vue'), meta: { requiresAuth: true, styleScope: 'content', title: '추천 코스' } },
 

@@ -15,22 +15,12 @@ import com.example.hangat.course.model.enums.CourseStatus;
 import com.example.hangat.course.model.enums.CourseType;
 import com.example.hangat.course.repository.CourseItemRepository;
 import com.example.hangat.course.repository.CourseRepository;
-import com.example.hangat.map.model.entity.DataSource;
 import com.example.hangat.map.model.entity.Place;
-import com.example.hangat.map.model.entity.PlaceCategory;
-import com.example.hangat.map.model.entity.PlaceSourceMapping;
-import com.example.hangat.map.model.entity.Region;
-import com.example.hangat.map.repository.DataSourceRepository;
-import com.example.hangat.map.repository.PlaceCategoryRepository;
-import com.example.hangat.map.repository.PlaceRepository;
-import com.example.hangat.map.repository.PlaceSourceMappingRepository;
-import com.example.hangat.map.repository.RegionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -41,28 +31,16 @@ public class CoursePersistenceService {
 
     private final CourseRepository courseRepository;
     private final CourseItemRepository courseItemRepository;
-    private final PlaceRepository placeRepository;
-    private final PlaceSourceMappingRepository mappingRepository;
-    private final DataSourceRepository dataSourceRepository;
-    private final RegionRepository regionRepository;
-    private final PlaceCategoryRepository placeCategoryRepository;
+    private final CoursePlaceResolver placeResolver;
 
     public CoursePersistenceService(
             CourseRepository courseRepository,
             CourseItemRepository courseItemRepository,
-            PlaceRepository placeRepository,
-            PlaceSourceMappingRepository mappingRepository,
-            DataSourceRepository dataSourceRepository,
-            RegionRepository regionRepository,
-            PlaceCategoryRepository placeCategoryRepository
+            CoursePlaceResolver placeResolver
     ) {
         this.courseRepository = courseRepository;
         this.courseItemRepository = courseItemRepository;
-        this.placeRepository = placeRepository;
-        this.mappingRepository = mappingRepository;
-        this.dataSourceRepository = dataSourceRepository;
-        this.regionRepository = regionRepository;
-        this.placeCategoryRepository = placeCategoryRepository;
+        this.placeResolver = placeResolver;
     }
 
     @Transactional
@@ -107,7 +85,7 @@ public class CoursePersistenceService {
             for (int itemIndex = 0; itemIndex < day.items().size(); itemIndex++) {
                 CourseAiResultDto.ItemDto resultItem = day.items().get(itemIndex);
                 CourseCandidate candidate = candidatesById.get(resultItem.candidateId());
-                Place place = resolvePlace(candidate);
+                Place place = placeResolver.resolvePlace(candidate);
                 CourseItem item = courseItemRepository.save(CourseItem.builder()
                         .course(course)
                         .place(place)
@@ -195,9 +173,7 @@ public class CoursePersistenceService {
                     "내부 또는 외부 장소 식별자가 없는 후보는 저장할 수 없습니다.");
         }
         if (identity.placeId() == null) {
-            resolveRegion(candidate.regionCode());
-            resolveCategory(category.code());
-            resolveDataSource(normalizedSourceCode(identity));
+            placeResolver.validateCandidateReferences(candidate);
         }
     }
 
@@ -209,99 +185,6 @@ public class CoursePersistenceService {
                 > MAX_RECOMMENDATION_REASON_LENGTH) {
             throw new IllegalStateException("추천 이유가 300자를 초과했습니다.");
         }
-    }
-
-    private Place resolvePlace(CourseCandidate candidate) {
-        CandidateIdentity identity = candidate.identity();
-        if (identity.placeId() != null) {
-            Place place = placeRepository.findById(identity.placeId())
-                    .orElseThrow(() -> new IllegalStateException(
-                            "내부 장소를 찾을 수 없습니다: " + identity.placeId()));
-            if (hasSourceIdentity(identity)) {
-                ensureSourceMapping(place, identity);
-            }
-            return place;
-        }
-
-        String sourceCode = normalizedSourceCode(identity);
-        String sourcePlaceId = identity.sourcePlaceId().trim();
-        return mappingRepository.findBySourceCodeAndSourcePlaceId(sourceCode, sourcePlaceId)
-                .map(PlaceSourceMapping::getPlace)
-                .orElseGet(() -> createMappedPlace(
-                        candidate, sourceCode, sourcePlaceId));
-    }
-
-    private void ensureSourceMapping(Place place, CandidateIdentity identity) {
-        String sourceCode = normalizedSourceCode(identity);
-        String sourcePlaceId = identity.sourcePlaceId().trim();
-        mappingRepository.findBySourceCodeAndSourcePlaceId(sourceCode, sourcePlaceId)
-                .ifPresentOrElse(mapping -> {
-                    if (!mapping.getPlace().getId().equals(place.getId())) {
-                        throw new IllegalStateException(
-                                "내부 장소와 외부 장소 매핑이 서로 충돌합니다: "
-                                        + sourceCode + "/" + sourcePlaceId);
-                    }
-                }, () -> mappingRepository.save(newSourceMapping(
-                        place, resolveDataSource(sourceCode), sourcePlaceId)));
-    }
-
-    private Place createMappedPlace(
-            CourseCandidate candidate,
-            String sourceCode,
-            String sourcePlaceId
-    ) {
-        Region region = resolveRegion(candidate.regionCode());
-        String categoryCode = candidate.internalPlaceCategory().code();
-        PlaceCategory category = resolveCategory(categoryCode);
-        PlaceFact fact = candidate.place();
-        Place place = placeRepository.save(Place.builder()
-                .region(region)
-                .primaryCategory(category)
-                .name(fact.name())
-                .normalizedName(normalizeName(fact.name()))
-                .roadAddress(fact.roadAddress())
-                .lotAddress(fact.address())
-                .latitude(fact.latitude())
-                .longitude(fact.longitude())
-                .imageUrl(fact.imageUrl())
-                .build());
-        mappingRepository.save(newSourceMapping(
-                place, resolveDataSource(sourceCode), sourcePlaceId));
-        return place;
-    }
-
-    private PlaceSourceMapping newSourceMapping(
-            Place place,
-            DataSource source,
-            String sourcePlaceId
-    ) {
-        return PlaceSourceMapping.builder()
-                .place(place)
-                .source(source)
-                .sourcePlaceId(sourcePlaceId)
-                .isActive(true)
-                .build();
-    }
-
-    private Region resolveRegion(String code) {
-        return regionRepository.findByCode(code)
-                .filter(Region::isActive)
-                .orElseThrow(() -> new IllegalStateException(
-                        "등록된 권역 코드를 찾을 수 없습니다: " + code));
-    }
-
-    private PlaceCategory resolveCategory(String code) {
-        return placeCategoryRepository.findByCode(code)
-                .filter(PlaceCategory::isActive)
-                .orElseThrow(() -> new IllegalStateException(
-                        "등록된 장소 카테고리를 찾을 수 없습니다: " + code));
-    }
-
-    private DataSource resolveDataSource(String sourceCode) {
-        return dataSourceRepository.findById(sourceCode)
-                .filter(DataSource::isActive)
-                .orElseThrow(() -> new IllegalStateException(
-                        "등록된 데이터 출처를 찾을 수 없습니다: " + sourceCode));
     }
 
     private short toPeople(Integer people) {
@@ -324,20 +207,6 @@ public class CoursePersistenceService {
 
     private boolean hasSourceIdentity(CandidateIdentity identity) {
         return !isBlank(identity.sourceCode()) && !isBlank(identity.sourcePlaceId());
-    }
-
-    private String normalizedSourceCode(CandidateIdentity identity) {
-        if (!hasSourceIdentity(identity)) {
-            throw new IllegalStateException("외부 장소 identity가 없는 후보는 저장할 수 없습니다.");
-        }
-        return identity.sourceCode().trim().toUpperCase(Locale.ROOT);
-    }
-
-    private String normalizeName(String value) {
-        return value == null
-                ? ""
-                : value.replaceAll("[\\s\\p{P}\\p{S}]+", "")
-                        .toLowerCase(Locale.ROOT);
     }
 
     private boolean isBlank(String value) {

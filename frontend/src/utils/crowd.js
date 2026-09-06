@@ -38,7 +38,7 @@ export function crowdOn (place, date) {
 export const tier = c => (c == null ? 'none' : c < 40 ? 'calm' : c < 70 ? 'mid' : 'busy')
 
 /** 원본 :511 */
-export const tierKo = c => (c == null ? '정보 없음' : c < 40 ? '한산' : c < 70 ? '보통' : '붐빔')
+export const tierKo = c => (c == null ? '정보 없음' : c < 40 ? '한산' : c < 70 ? '보통' : '혼잡')
 
 /** 원본 :526~528 */
 export function weatherOn (date) {
@@ -119,22 +119,31 @@ export function crowd (s, i) {
 }
 
 /** 혼잡 단계의 한국어 라벨. 리뷰의 혼잡 제보 선택지에 쓰인다 (MAP_008) */
-export const CROWD_KO = { calm: '한산', mid: '보통', busy: '붐빔' }
+export const CROWD_KO = { calm: '한산', mid: '보통', busy: '혼잡' }
 
-/** 그 장소의 30일 예보 중 i일이 몇 번째로 한산한가 (1 = 가장 한산) */
+/** 그 장소의 30일 예보 중 i일이 몇 번째로 한산한가 (1 = 가장 한산). 예보 없는 날은 순위에서 뺀다 */
 export function rank30 (s, i) {
   const c = crowd(s, i)
+  if (c == null) return null
   let r = 1
-  for (let k = 0; k < 30; k++) if (crowd(s, k) < c) r++
+  for (let k = 0; k < 30; k++) {
+    const v = crowd(s, k)
+    if (v != null && v < c) r++
+  }
   return r
 }
 
-/** [from, from+span) 구간에서 가장 한산한 날. 30일을 넘지 않는다 */
+/**
+ * [from, from+span) 구간에서 가장 한산한 날. 30일을 넘지 않는다.
+ * 예보 없는 날(null)은 후보에서 뺀다 - JS 는 null < 숫자를 0 < 숫자로 계산해서,
+ * 안 거르면 예보 창 밖(끝자락) 날짜가 "가장 한산한 날"로 뽑혀 회색 화면으로 안내한다.
+ * 구간 전체가 null 이면 c: null - 호출부가 팁을 숨기는 근거
+ */
 export function bestDay (s, from = 0, span = 30) {
-  let best = { k: from, c: crowd(s, from) }
+  let best = { k: from, c: null }
   for (let k = from; k < Math.min(30, from + span); k++) {
     const c = crowd(s, k)
-    if (c < best.c) best = { k, c }
+    if (c != null && (best.c == null || c < best.c)) best = { k, c }
   }
   return best
 }

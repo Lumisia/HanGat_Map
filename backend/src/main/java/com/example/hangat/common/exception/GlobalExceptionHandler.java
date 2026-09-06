@@ -4,6 +4,9 @@ import com.example.hangat.common.model.BaseResponse;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import com.example.hangat.common.model.BaseResponseStatus;
+import com.example.hangat.course.ai.CourseAiException;
+import com.example.hangat.course.ai.CourseAiFailureType;
+import com.example.hangat.course.route.CourseCarRouteException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -59,6 +62,24 @@ public class GlobalExceptionHandler {
                 ? BaseResponse.fail(status, e.getResult())
                 : BaseResponse.fail(status);
         return ResponseEntity.status(httpStatusOf(status.getCode())).body(response);
+    }
+
+    @ExceptionHandler(CourseAiException.class)
+    public ResponseEntity<BaseResponse<Object>> handleCourseAiException(CourseAiException e) {
+        if (e.getFailureType() == CourseAiFailureType.RATE_LIMIT
+                || e.getFailureType() == CourseAiFailureType.TEMPORARILY_UNAVAILABLE) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(BaseResponse.fail(
+                            BaseResponseStatus.AI_COURSE_TEMPORARILY_UNAVAILABLE));
+        }
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(BaseResponse.fail(BaseResponseStatus.EXTERNAL_API_ERROR));
+    }
+
+    @ExceptionHandler(CourseCarRouteException.class)
+    public ResponseEntity<BaseResponse<Object>> handleCourseCarRouteException(CourseCarRouteException e) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(BaseResponse.fail(BaseResponseStatus.EXTERNAL_API_ERROR));
     }
 
     /**

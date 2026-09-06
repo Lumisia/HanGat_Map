@@ -142,7 +142,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateArrows))
             class="weather-icon"
             aria-hidden="true"
           >{{ weather.icon }}</span>
-          <strong>{{ weather.temperature }}°</strong>
+          <strong>{{ weather.temperature === null ? '-' : `${weather.temperature}°` }}</strong>
           <small>{{ weather.description }}</small>
         </article>
       </div>

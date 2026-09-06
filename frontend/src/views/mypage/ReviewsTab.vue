@@ -42,7 +42,7 @@ const expanded = ref(new Set())
 const deleting = ref(null)
 const deleteBusy = ref(false)
 
-const CROWD_KO = { calm: '한산했어요', mid: '보통이었어요', busy: '붐볐어요' }
+const CROWD_KO = { calm: '한산했어요', mid: '보통이었어요', busy: '혼잡했어요' }
 
 async function fetchList (reset = false) {
   if (reset) pageNo.value = 1

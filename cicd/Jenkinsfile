@@ -1,0 +1,321 @@
+pipeline {
+    agent any
+
+    // ────────────────────────── Pipeline 제어 ──────────────────────────
+
+    options {
+        skipDefaultCheckout(true)
+        disableConcurrentBuilds()
+        timeout(time: 45, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    // ────────────────────────── 공통 설정 ──────────────────────────
+
+    environment {
+        DOCKER_BUILDKIT = '1'
+
+        BACKEND_IMAGE = 'lumisia/hangat-backend'
+        FRONTEND_IMAGE = 'lumisia/hangat-frontend'
+
+        FRONTEND_API_BASE_URL = 'https://api.hangatjeju.com'
+
+        HELM_RELEASE = 'hangat'
+        K8S_NAMESPACE = 'hangat'
+    }
+
+    stages {
+
+        // ────────────────────────── 소스 조회 ──────────────────────────
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+
+                script {
+                    String commitHash = sh(
+                            script: 'git rev-parse --short=12 HEAD',
+                            returnStdout: true
+                    ).trim()
+
+                    env.IMAGE_TAG = "${commitHash}-${env.BUILD_NUMBER}"
+                }
+
+                echo "배포 이미지 태그: ${env.IMAGE_TAG}"
+            }
+        }
+
+        // ────────────────────────── 백엔드 검사 ──────────────────────────
+
+        stage('Backend Test') {
+            steps {
+                sh '''
+                    set -eu
+
+                    TEST_CONTAINER="hangat-backend-test-${BUILD_NUMBER}"
+
+                    cleanup() {
+                        mkdir -p "$WORKSPACE/backend/build/test-results/test"
+                        docker cp \
+                          "$TEST_CONTAINER:/workspace/build/test-results/test/." \
+                          "$WORKSPACE/backend/build/test-results/test/" \
+                          >/dev/null 2>&1 || true
+                        docker rm -f "$TEST_CONTAINER" >/dev/null 2>&1 || true
+                    }
+
+                    trap cleanup EXIT
+
+                    docker rm -f "$TEST_CONTAINER" >/dev/null 2>&1 || true
+
+                    docker create \
+                      --name "$TEST_CONTAINER" \
+                      --user "$(id -u):$(id -g)" \
+                      --env HOME=/tmp \
+                      --env GRADLE_USER_HOME=/tmp/gradle \
+                      --workdir /workspace \
+                      eclipse-temurin:17-jdk-jammy \
+                      sh -c "
+                        sed -i 's/\\r$//' gradlew &&
+                        chmod +x gradlew &&
+                        ./gradlew test --no-daemon
+                      "
+
+                    docker cp \
+                      "$WORKSPACE/backend/." \
+                      "$TEST_CONTAINER:/workspace"
+
+                    docker start --attach "$TEST_CONTAINER"
+                '''
+            }
+        }
+
+        // ────────────────────────── 프론트 검사 ──────────────────────────
+
+        stage('Frontend Test') {
+            steps {
+                sh '''
+                    set -eu
+
+                    TEST_CONTAINER="hangat-frontend-test-${BUILD_NUMBER}"
+
+                    cleanup() {
+                        docker rm -f "$TEST_CONTAINER" >/dev/null 2>&1 || true
+                    }
+
+                    trap cleanup EXIT
+
+                    docker rm -f "$TEST_CONTAINER" >/dev/null 2>&1 || true
+
+                    docker create \
+                      --name "$TEST_CONTAINER" \
+                      --user "$(id -u):$(id -g)" \
+                      --env HOME=/tmp \
+                      --env npm_config_cache=/tmp/npm-cache \
+                      --workdir /workspace \
+                      node:22-alpine \
+                      sh -c "
+                        npm ci &&
+                        npm run type-check &&
+                        npm test
+                      "
+
+                    docker cp \
+                      "$WORKSPACE/frontend/." \
+                      "$TEST_CONTAINER:/workspace"
+
+                    docker start --attach "$TEST_CONTAINER"
+                '''
+            }
+        }
+
+        // ────────────────────────── Helm 검사 ──────────────────────────
+
+        stage('Helm Validate') {
+            steps {
+                withCredentials([
+                    file(
+                        credentialsId: 'hangat-values-private',
+                        variable: 'HELM_VALUES_PRIVATE'
+                    )
+                ]) {
+                    sh '''
+                        set +x
+
+                        test -f cicd/helm/Chart.yaml
+                        test -f cicd/helm/values.yaml
+                        test -f cicd/helm/values-oci-k3s.yaml
+
+                        helm lint cicd/helm \
+                          --values cicd/helm/values.yaml \
+                          --values cicd/helm/values-oci-k3s.yaml \
+                          --values "$HELM_VALUES_PRIVATE"
+
+                        helm template "$HELM_RELEASE" cicd/helm \
+                          --namespace "$K8S_NAMESPACE" \
+                          --values cicd/helm/values.yaml \
+                          --values cicd/helm/values-oci-k3s.yaml \
+                          --values "$HELM_VALUES_PRIVATE" \
+                          > /dev/null
+                    '''
+                }
+            }
+        }
+
+        // ────────────────────────── 백엔드 이미지 생성 ──────────────────────────
+
+        stage('Build Backend Image') {
+            steps {
+                sh '''
+                    docker build \
+                      --file cicd/backend.Dockerfile \
+                      --tag "$BACKEND_IMAGE:$IMAGE_TAG" \
+                      .
+                '''
+            }
+        }
+
+        // ────────────────────────── 프론트 이미지 생성 ──────────────────────────
+
+        stage('Build Frontend Image') {
+            steps {
+                withCredentials([
+                    string(
+                        credentialsId: 'hangat-kakao-map-key',
+                        variable: 'KAKAO_MAP_KEY'
+                    )
+                ]) {
+                    sh '''
+                        set +x
+
+                        test -n "$KAKAO_MAP_KEY"
+                        test -n "$FRONTEND_API_BASE_URL"
+
+                        docker build \
+                          --build-arg VITE_API_BASE_URL="$FRONTEND_API_BASE_URL" \
+                          --secret id=kakao_map_key,env=KAKAO_MAP_KEY \
+                          --file cicd/frontend.Dockerfile \
+                          --tag "$FRONTEND_IMAGE:$IMAGE_TAG" \
+                          .
+                    '''
+                }
+            }
+        }
+
+        // ────────────────────────── Docker Hub 업로드 ──────────────────────────
+
+        stage('Push Images') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-lumisia',
+                        usernameVariable: 'DOCKERHUB_USERNAME',
+                        passwordVariable: 'DOCKERHUB_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set +x
+
+                        printf '%s' "$DOCKERHUB_TOKEN" |
+                          docker login \
+                            --username "$DOCKERHUB_USERNAME" \
+                            --password-stdin
+
+                        docker tag \
+                          "$BACKEND_IMAGE:$IMAGE_TAG" \
+                          "$BACKEND_IMAGE:latest"
+
+                        docker tag \
+                          "$FRONTEND_IMAGE:$IMAGE_TAG" \
+                          "$FRONTEND_IMAGE:latest"
+
+                        docker push "$BACKEND_IMAGE:$IMAGE_TAG"
+                        docker push "$BACKEND_IMAGE:latest"
+
+                        docker push "$FRONTEND_IMAGE:$IMAGE_TAG"
+                        docker push "$FRONTEND_IMAGE:latest"
+
+                        docker logout
+                    '''
+                }
+            }
+        }
+
+        // ────────────────────────── OCI k3s 배포 ──────────────────────────
+
+        stage('Deploy') {
+            steps {
+                withCredentials([
+                    file(
+                        credentialsId: 'oci-k3s-kubeconfig',
+                        variable: 'KUBECONFIG_FILE'
+                    ),
+                    file(
+                        credentialsId: 'hangat-values-private',
+                        variable: 'HELM_VALUES_PRIVATE'
+                    )
+                ]) {
+                    sh '''
+                        set +x
+
+                        export KUBECONFIG="$KUBECONFIG_FILE"
+
+                        helm upgrade --install \
+                          "$HELM_RELEASE" \
+                          cicd/helm \
+                          --namespace "$K8S_NAMESPACE" \
+                          --values cicd/helm/values.yaml \
+                          --values cicd/helm/values-oci-k3s.yaml \
+                          --values "$HELM_VALUES_PRIVATE" \
+                          --set-string backend.image.repository="$BACKEND_IMAGE" \
+                          --set-string backend.image.tag="$IMAGE_TAG" \
+                          --set-string frontend.image.repository="$FRONTEND_IMAGE" \
+                          --set-string frontend.image.tag="$IMAGE_TAG" \
+                          --history-max 10 \
+                          --atomic \
+                          --wait \
+                          --timeout 5m
+
+                        kubectl \
+                          --namespace "$K8S_NAMESPACE" \
+                          rollout status \
+                          deployment/hangat-backend \
+                          --timeout=180s
+
+                        kubectl \
+                          --namespace "$K8S_NAMESPACE" \
+                          rollout status \
+                          deployment/hangat-frontend \
+                          --timeout=180s
+                    '''
+                }
+            }
+        }
+    }
+
+    // ────────────────────────── 실행 결과 정리 ──────────────────────────
+
+    post {
+        always {
+            junit(
+                testResults: 'backend/build/test-results/test/*.xml',
+                allowEmptyResults: true
+            )
+
+            sh '''
+                docker logout >/dev/null 2>&1 || true
+            '''
+        }
+
+        success {
+            echo "Hangat 배포 성공: ${env.IMAGE_TAG}"
+        }
+
+        failure {
+            echo "Hangat Pipeline 실패: ${env.BUILD_URL}"
+        }
+
+        cleanup {
+            deleteDir()
+        }
+    }
+}

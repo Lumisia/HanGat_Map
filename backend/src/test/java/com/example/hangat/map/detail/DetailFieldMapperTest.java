@@ -24,6 +24,7 @@ class DetailFieldMapperTest {
         String checkintime = null, checkouttime = null;
         String opentime = null, restdateshopping = null, parkingshopping = null, restroom = null;
         String opentimefood = null, restdatefood = null, parkingfood = null;
+        String firstmenu = null, treatmenu = null;
         for (int i = 0; i < kv.length; i += 2) {
             String k = kv[i], v = kv[i + 1];
             switch (k) {
@@ -48,6 +49,8 @@ class DetailFieldMapperTest {
                 case "opentimefood" -> opentimefood = v;
                 case "restdatefood" -> restdatefood = v;
                 case "parkingfood" -> parkingfood = v;
+                case "firstmenu" -> firstmenu = v;
+                case "treatmenu" -> treatmenu = v;
                 default -> throw new IllegalArgumentException("모르는 필드: " + k);
             }
         }
@@ -57,7 +60,7 @@ class DetailFieldMapperTest {
                 usetimeleports, restdateleports, parkingleports,
                 checkintime, checkouttime,
                 opentime, restdateshopping, parkingshopping, restroom,
-                opentimefood, restdatefood, parkingfood);
+                opentimefood, restdatefood, parkingfood, firstmenu, treatmenu);
     }
 
     @Test
@@ -124,6 +127,24 @@ class DetailFieldMapperTest {
 
         String hours = mapper.operatingHours(음식점);
         assertThat(hours).doesNotContain("<br>").contains("\n");
+    }
+
+    @Test
+    void 메뉴는_음식점에서만_읽고_착한가격과_같은_형식으로_만든다() {
+        PlaceIntroItem 음식점 = item("39", "firstmenu", "갈치조림", "treatmenu", "갈치구이 / 성게미역국");
+        assertThat(mapper.menuText(음식점)).isEqualTo("대표메뉴: 갈치조림 · 갈치구이 · 성게미역국");
+
+        // 음식점(39)이 아니면 읽지 않는다
+        assertThat(mapper.menuText(item("12", "usetime", "09:00~18:00"))).isNull();
+    }
+
+    @Test
+    void 메뉴_중복과_br태그를_정리하고_없으면_null이다() {
+        // firstmenu 가 treatmenu 에 또 들어오는 경우가 흔하다 - 중복은 한 번만
+        PlaceIntroItem 중복 = item("39", "firstmenu", "흑돼지구이", "treatmenu", "흑돼지구이, 김치찌개<br>된장찌개");
+        assertThat(mapper.menuText(중복)).isEqualTo("대표메뉴: 흑돼지구이 · 김치찌개 · 된장찌개");
+
+        assertThat(mapper.menuText(item("39"))).isNull();
     }
 
     @Test

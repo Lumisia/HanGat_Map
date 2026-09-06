@@ -1,0 +1,24 @@
+# 기본적으로 모든 파일을 제외한다.
+*
+
+# ────────────────────────── 프론트 빌드 파일 ──────────────────────────
+
+!frontend/
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/index.html
+!frontend/vite.config.js
+!frontend/tsconfig.json
+!frontend/tsconfig.app.json
+!frontend/tsconfig.node.json
+
+!frontend/public/
+!frontend/public/**
+
+!frontend/src/
+!frontend/src/**
+
+# ────────────────────────── Nginx 설정 ──────────────────────────
+
+!cicd/
+!cicd/nginx.conf

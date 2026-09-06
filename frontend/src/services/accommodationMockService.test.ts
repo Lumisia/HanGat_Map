@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { accommodationMockService } from './accommodationMockService'
 import { accommodationSearchService, normalizeKakaoAccommodationResults } from './accommodationSearchService'
 import type { CourseResult } from '../assets/types/course'
+import { loadKakaoMap } from './map/KakaoMapLoader'
+
+vi.mock('./map/KakaoMapLoader', () => ({ loadKakaoMap: vi.fn() }))
 
 function eastCentredCourse(): CourseResult {
   return {
@@ -34,24 +37,11 @@ function eastCentredCourse(): CourseResult {
 }
 
 describe('accommodationMockService', () => {
-  it('returns only partial-name matches and requires at least two characters', async () => {
+  it('requires at least two characters and does not fall back to mock accommodation data', async () => {
     expect((await accommodationSearchService.searchAccommodations('롯')).items).toEqual([])
-    const matches = (await accommodationSearchService.searchAccommodations('롯데')).items
-    expect(matches.length).toBeGreaterThan(0)
-    expect(matches.every(item => item.place_name.includes('롯데'))).toBe(true)
-    expect(matches.some(item => item.place_name.includes('성산'))).toBe(false)
-    expect(matches.every(item => item.source_code === 'KAKAO_LOCAL' && typeof item.source_place_id === 'string')).toBe(true)
-    expect(matches.every(item => !('place_id' in item))).toBe(true)
-  })
-
-  it('returns five accommodations per page without accumulating previous results', async () => {
-    const first = await accommodationSearchService.searchAccommodations('제주', 1)
-    const second = await accommodationSearchService.searchAccommodations('제주', 2)
-    expect(first.items).toHaveLength(5)
-    expect(first.has_next_page).toBe(true)
-    expect(second.items).toHaveLength(3)
-    expect(second.has_next_page).toBe(false)
-    expect(new Set([...first.items, ...second.items].map(item => item.source_place_id)).size).toBe(8)
+    vi.mocked(loadKakaoMap).mockRejectedValueOnce(new Error('Kakao unavailable'))
+    await expect(accommodationSearchService.searchAccommodations('롯데'))
+      .rejects.toThrow('Kakao unavailable')
   })
 
   it('keeps valid Jeju stays, removes unrelated results, and preserves exact-name accuracy first', () => {

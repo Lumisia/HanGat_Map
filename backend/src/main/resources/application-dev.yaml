@@ -25,7 +25,7 @@ spring:
   # 메일 발송
   mail:
     host: ${MAIL_HOST}
-    port: ${MAIL_PORT:587}
+    port: ${MAIL_PORT}
     username: ${MAIL_USERNAME}
     password: ${MAIL_PASSWORD}
     properties:
@@ -88,6 +88,9 @@ management:
 weather:
   base-url: https://apis.data.go.kr/1360000
   service-key: ${SERVICE_KEY}
+  ingest:
+    # 개발 머신마다 밤에 기상청을 부르지 않는다 - 수동 실행은 POST /admin/ingest/weather
+    enabled: false
 
 tour-api:
   base-url: ${TOUR_API_BASE_URL}
@@ -106,6 +109,7 @@ gemini:
 
 app:
   frontend-url: ${FRONTEND_URL:http://localhost:4173}
+  backend-url: ${BACKEND_URL:http://localhost:8080}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:4173,http://localhost:5173}
   cookie:
@@ -126,3 +130,13 @@ sample-courses:
 
 kakao-local:
   rest-key: ${KAKAO_LOCAL_REST_KEY:}
+
+kakao-mobility:
+  rest-key: ${KAKAO_LOCAL_REST_KEY:}
+  base-url: https://apis-navi.kakaomobility.com
+  connect-timeout: 3s
+  read-timeout: 15s
+  max-attempts: 3
+  retry-backoff: 200ms
+  cache-ttl: 10m
+  cache-max-size: 128

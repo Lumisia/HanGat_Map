@@ -169,6 +169,7 @@ CREATE TABLE `courses` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     `user_id` BIGINT UNSIGNED NULL DEFAULT NULL,
     `preset_id` BIGINT UNSIGNED NULL DEFAULT NULL,
+    `accommodation_source_mapping_id` BIGINT UNSIGNED NULL DEFAULT NULL,
     `parent_course_id` BIGINT UNSIGNED NULL DEFAULT NULL,
     `course_type` ENUM('USER','SAMPLE') NOT NULL DEFAULT 'USER',
     `generation_reason` ENUM('INITIAL','USER_REGENERATE','WEATHER_REPLAN','SAMPLE_BATCH') NOT NULL DEFAULT 'INITIAL',
@@ -194,6 +195,9 @@ CREATE TABLE `courses` (
     CONSTRAINT `fk_courses_parent`
         FOREIGN KEY (`parent_course_id`) REFERENCES `courses` (`id`)
         ON DELETE SET NULL ON UPDATE RESTRICT,
+    CONSTRAINT `fk_courses_accommodation_source_mapping`
+        FOREIGN KEY (`accommodation_source_mapping_id`) REFERENCES `place_source_mappings` (`id`)
+        ON DELETE RESTRICT ON UPDATE RESTRICT,
     CONSTRAINT `chk_courses_sample_shape`
         CHECK (`course_type` <> 'SAMPLE' OR
             (`preset_id` IS NOT NULL AND `user_id` IS NULL AND `title` IS NOT NULL)),
@@ -215,6 +219,7 @@ CREATE TABLE `courses` (
             OR (`status` <> 'DELETED' AND `deleted_at` IS NULL)),
     INDEX `idx_courses_user_status_saved` (`user_id`, `status`, `saved_at`),
     INDEX `idx_courses_preset` (`preset_id`),
+    INDEX `idx_courses_accommodation_source_mapping` (`accommodation_source_mapping_id`),
     INDEX `idx_courses_parent` (`parent_course_id`),
     INDEX `idx_courses_course_type_status` (`course_type`, `status`),
     INDEX `idx_courses_status` (`status`),
