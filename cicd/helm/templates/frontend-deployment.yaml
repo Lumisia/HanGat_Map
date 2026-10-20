@@ -22,6 +22,8 @@ spec:
 
   template:
     metadata:
+      annotations:
+        hangat.io/revision: {{ .Values.deployment.revision | quote }}
       labels:
         {{- include "hangat.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: frontend

@@ -1,5 +1,9 @@
 package com.example.hangat.course.model;
 
+import com.example.hangat.course.service.IndoorClassifier;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.example.hangat.map.model.enums.CongestionLevel;
+
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
@@ -25,12 +29,12 @@ public record CourseResponseDto(
         LocalDate startDate,
         LocalDate endDate,
         Short people,
-        Integer budgetTotal,
         Transport transport,
         AccommodationDto accommodation,
         Integer estimatedCostMin,
         Integer estimatedCostMax,
         BudgetSummaryDto budgetSummary,
+        BigDecimal averageCongestionRate,
         List<DayDto> days,
         @JsonInclude(JsonInclude.Include.NON_NULL) String claimToken,
         @JsonInclude(JsonInclude.Include.NON_NULL) Instant claimExpiresAt
@@ -74,14 +78,13 @@ public record CourseResponseDto(
             LocalDate startDate,
             LocalDate endDate,
             Short people,
-            Integer budgetTotal,
             Transport transport,
             AccommodationDto accommodation,
             List<DayDto> days
     ) {
         this(id, contractVersion, courseType, generationReason, status, startDate, endDate,
-                people, budgetTotal, transport, accommodation, null, null, null,
-                days, null, null);
+                people, transport, accommodation, null, null, null,
+                null, days, null, null);
     }
 
     public CourseResponseDto(
@@ -93,7 +96,6 @@ public record CourseResponseDto(
             LocalDate startDate,
             LocalDate endDate,
             Short people,
-            Integer budgetTotal,
             Transport transport,
             AccommodationDto accommodation,
             Integer estimatedCostMin,
@@ -102,14 +104,27 @@ public record CourseResponseDto(
             List<DayDto> days
     ) {
         this(id, contractVersion, courseType, generationReason, status, startDate, endDate,
-                people, budgetTotal, transport, accommodation, estimatedCostMin,
-                estimatedCostMax, budgetSummary, days, null, null);
+                people, transport, accommodation, estimatedCostMin,
+                estimatedCostMax, budgetSummary, null, days, null, null);
+    }
+
+    public CourseResponseDto(
+            Long id, String contractVersion, CourseType courseType, GenerationReason generationReason,
+            CourseStatus status, LocalDate startDate, LocalDate endDate, Short people,
+            Transport transport, AccommodationDto accommodation,
+            Integer estimatedCostMin, Integer estimatedCostMax, BudgetSummaryDto budgetSummary,
+            BigDecimal averageCongestionRate, List<DayDto> days
+    ) {
+        this(id, contractVersion, courseType, generationReason, status, startDate, endDate,
+                people, transport, accommodation, estimatedCostMin,
+                estimatedCostMax, budgetSummary, averageCongestionRate, days, null, null);
     }
 
     public CourseResponseDto withClaimProof(String token, Instant expiresAt) {
         return new CourseResponseDto(id, contractVersion, courseType, generationReason, status,
-                startDate, endDate, people, budgetTotal, transport, accommodation,
-                estimatedCostMin, estimatedCostMax, budgetSummary, days, token, expiresAt);
+                startDate, endDate, people, transport, accommodation,
+                estimatedCostMin, estimatedCostMax, budgetSummary, averageCongestionRate,
+                days, token, expiresAt);
     }
 
     private static <T> List<T> immutableList(List<T> values) {
@@ -168,6 +183,12 @@ public record CourseResponseDto(
             weather = weather == null ? null : List.copyOf(weather);
         }
 
+        /** 실내 여부 - 이름 키워드 휴리스틱(IndoorClassifier). 컬럼이 아니라 응답에서만 파생한다. 화면의 비 예보일 실내 배지 근거 */
+        @JsonProperty(value = "indoor", access = JsonProperty.Access.READ_ONLY)
+        public boolean indoor() {
+            return IndoorClassifier.isIndoor(placeName);
+        }
+
     }
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
@@ -189,7 +210,6 @@ public record CourseResponseDto(
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record BudgetSummaryDto(
             boolean hasCostData,
-            Integer budgetTotal,
             int verifiedTotal,
             Integer estimatedTotal,
             Integer estimatedMin,
@@ -197,9 +217,6 @@ public record CourseResponseDto(
             Integer totalExpected,
             Integer totalExpectedMin,
             Integer totalExpectedMax,
-            Integer remainingBudget,
-            BigDecimal usageRate,
-            Boolean overBudget,
             int unknownCount
     ) {
     }
@@ -223,8 +240,18 @@ public record CourseResponseDto(
             String precipitationTypeCode,
             String skyConditionCode,
             BigDecimal windSpeed,
-            Integer humidity
+            Integer humidity,
+            com.example.hangat.course.facts.DailyWeatherEvidence dailyEvidence
     ) {
+        public WeatherFactDto(LocalDate date, LocalTime time, BigDecimal temperature, Integer probability,
+                String precipitation, String sky, BigDecimal wind, Integer humidity) {
+            this(date, time, temperature, probability, precipitation, sky, wind, humidity, null);
+        }
+        public static WeatherFactDto from(com.example.hangat.course.facts.WeatherFact fact) {
+            return new WeatherFactDto(fact.forecastDate(), fact.forecastTime(), fact.temperature(),
+                    fact.precipitationProbability(), fact.precipitationTypeCode(), fact.skyConditionCode(),
+                    fact.windSpeed(), fact.humidity(), fact.dailyEvidence());
+        }
     }
 
     public enum ItemSource {

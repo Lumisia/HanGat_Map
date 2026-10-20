@@ -78,7 +78,13 @@ public class PlaceDetailResponse {
     /** 아직 계산 전이면 null - 0점으로 채우지 않는다. */
     private final BigDecimal hiddenGemScore;
 
-    /** 사진 목록(sort_order 순). 없으면 빈 배열 - 화면이 사진 영역을 숨긴다 */
+    /**
+     * 대표 사진(KTO firstimage). 장소 적재에서 채우므로 상세 사진 배치를 아직 안 돌린 장소도 값이 있다 -
+     * 목록·카드와 같은 사진이다. 없으면 null.
+     */
+    private final String imageUrl;
+
+    /** 상세 사진 목록(sort_order 순). 사진 적재 배치가 채운다. 없으면 빈 배열 */
     private final List<PlaceImageResponse> images;
 
     /** 별점 후기가 없으면 null. {@link #ratingAvgOrNull(Place)} 참고. */
@@ -92,6 +98,7 @@ public class PlaceDetailResponse {
      */
     public static PlaceDetailResponse from(Place place, Object[] apiTag, List<PlaceImageResponse> images) {
         return PlaceDetailResponse.builder()
+                .imageUrl(place.getImageUrl())
                 .images(images == null ? List.of() : images)
                 .tagCode(apiTag == null ? null : (String) apiTag[0])
                 .tagName(apiTag == null ? null : (String) apiTag[1])

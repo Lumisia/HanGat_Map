@@ -1,21 +1,15 @@
 <script setup>
 /* MAP_006 코스 표시 — 생성은 AI 코스 페이지 담당, 지도는 결과 표시와 일차 전환만 맡는다 */
-import { ref, computed, watch } from 'vue'
-import { state, isCourseSaved, saveCourse, toast } from '@/stores/mapStore'
-import { useAuthStore } from '@/stores/auth'
-import { swapStop } from '@/utils/course'
-import { at, fmt } from '@/utils/date'
+import { computed } from 'vue'
+import { state } from '@/stores/mapStore'
+import { at, fmt, today } from '@/utils/date'
 import { tier } from '@/utils/crowd'
 import { won } from '@/utils/geo'
 import { wxOf, wxIcon } from '@/utils/weather'
+import { weatherBasis, MID_TERM_FROM } from '@/services/map/MapWeatherService'
+import { poiMarkerClass } from './mapPresentation'
 
 const emit = defineEmits(['close', 'open-place'])
-const auth = useAuthStore()
-
-const naming = ref(false)
-const draftTitle = ref('')
-const nameInput = ref(null)
-
 const course = computed(() => state.course)
 const byDay = computed(() => {
   const g = {}
@@ -35,37 +29,29 @@ const moveText = computed(() => {
   const m = course.value.move
   return `${Math.floor(m / 60) ? Math.floor(m / 60) + '시간 ' : ''}${m % 60}분`
 })
-const spentPct = computed(() => Math.min(100, course.value.spent / course.value.bud * 100))
-const rest = computed(() => course.value.bud - course.value.spent)
-const saved = computed(() => isCourseSaved())
 
-const dayWeather = d => wxOf(state.di + +d - 1)
+/* 일차 날짜·날씨는 코스의 여행일 기준. 전엔 위 날짜 선택기(state.di)를 따라가서 선택기를 옮기면 1일차 날짜까지 밀렸다(최종점검 #2).
+   날씨 권역은 그 일차 첫 경유지의 권역 - 전엔 권역을 안 넘겨 항상 북부 값이었다(#38). 권역을 모르는 날(대체 객체뿐)은 북부로 때우지 않고 비운다 */
+const startK = computed(() => {
+  const k = Math.round((new Date(course.value.startDate + 'T00:00:00') - today()) / 864e5)
+  return Number.isFinite(k) ? k : state.di   // 시작일이 없는 코스(구형 저장분)는 선택기 날짜로
+})
+const dayK = d => startK.value + +d - 1
+const dayRegion = d => (byDay.value[d] ?? []).map(s => s.o?.r).find(Boolean) ?? null
+const dayWeather = d => { const r = dayRegion(d); return r ? wxOf(dayK(d), r) : null }
 
-function swap(time, day) {
-  if (!swapStop(state.course, time, day, state.di)) return
-  state.course = { ...state.course }
-}
+/* 정류지 점: 식당·카페·숙소는 지도 핀과 같은 업종 원+아이콘(.poi-marker.mk-*), 관광지는 혼잡 색 점.
+   전엔 업종 장소도 회색 '예보 없음' 점이라 예보가 빠진 관광지처럼 보였다(2026-09-14 결정). 매핑은 검색 결과와 공유(poiMarkerClass) */
+const poiClass = poiMarkerClass
 
-function startSave() {
-  if (!auth.isLoggedIn) { toast('코스 저장은 로그인이 필요해요'); return }
-  draftTitle.value = `${state.F.reg} ${course.value.days - 1}박${course.value.days}일`
-  naming.value = true
-  requestAnimationFrame(() => nameInput.value?.select())
-}
-function confirmSave() {
-  const t = draftTitle.value.trim()
-  if (!t) { toast('코스 이름을 입력해 주세요'); return }
-  saveCourse(t)
-  naming.value = false
-}
-
-watch(() => state.course, () => { naming.value = false })
 </script>
 
 <template>
-  <div v-if="course" class="fl panel" :class="{ push: !!state.sel }">
+  <div v-if="course && state.coursePanel" class="fl panel" :class="{ push: !!state.sel }">
+    <!-- 제목·닫기가 첫 줄, 일차 칩은 둘째 줄. 한 줄에 다 넣으면 3일차부터 폭이 모자라 제목이 한 글자씩 세로로 깨졌다(최종점검 #15) -->
     <div class="ph">
       <h3>추천 코스</h3>
+      <button class="x" @click="emit('close')">×</button>
       <div class="days">
         <span class="chip" :class="{ on: state.courseDay === 'all' }"
           @click="state.courseDay = 'all'">전체</span>
@@ -73,7 +59,6 @@ watch(() => state.course, () => { naming.value = false })
           :class="{ on: String(state.courseDay) === String(d) }"
           @click="state.courseDay = +d">{{ d }}일차</span>
       </div>
-      <button class="x" @click="emit('close')">×</button>
     </div>
 
     <div class="pb">
@@ -102,21 +87,24 @@ watch(() => state.course, () => { naming.value = false })
 
       <template v-for="(stops, d) in byDay" :key="d">
         <div class="dayh">
-          {{ fmt(at(state.di + +d - 1)) }} · {{ d }}일차 <i></i>
-          <span v-if="dayWeather(d)" style="color:var(--tx3);font-weight:500">
-            <span v-html="wxIcon(dayWeather(d).k, 15)"></span> {{ dayWeather(d).k }}
+          {{ fmt(at(dayK(d))) }} · {{ d }}일차 <i></i>
+          <!-- 4일째부터는 중기예보(제주 한 지점)라 권역 대신 '제주'(최종점검 #42) -->
+          <span v-if="dayWeather(d)" style="color:var(--tx3);font-weight:500"
+            :title="`기상청 · ${weatherBasis(dayK(d), dayRegion(d))} 기준${dayK(d) >= MID_TERM_FROM ? '(중기예보)' : ''}`">
+            <span v-html="wxIcon(dayWeather(d).k, 15)"></span> {{ dayWeather(d).label }} · {{ weatherBasis(dayK(d), dayRegion(d)) }}
           </span>
         </div>
-        <template v-for="(s, i) in stops" :key="s.t + s.d">
+        <!-- key 는 일차-장소-순번. 전엔 방문시각+일차였는데 저장 코스 대부분이 방문시각이 비어 같은 일차 정류지가 전부 같은 key 였다(최종점검 #64) -->
+        <template v-for="(s, i) in stops" :key="`${s.d}-${s.o?.id ?? s.o?.n ?? s.f?.n ?? ''}-${i}`">
           <div v-if="i > 0 && s.mv" class="mv">↓ 차로 {{ s.mv }}분</div>
           <div class="stop" @click="emit('open-place', s.o ?? s.f.n)">
             <div class="tm">{{ s.t }}</div>
             <div>
               <!-- 혼잡·업종은 목록과 같은 핀 색으로 표시 (뱃지와 의미 중복 제거) -->
               <div class="hd">
-                <span class="rpin" :class="s.o ? tier(s.c) : 'food'"></span>
+                <span v-if="s.o && poiClass(s.o)" class="poi-marker cpin" :class="poiClass(s.o)"></span>
+                <span v-else class="rpin" :class="s.o ? tier(s.c) : 'food'"></span>
                 <span class="nm">{{ s.o ? s.o.n : s.f.n }}</span>
-                <button class="sw" @click.stop="swap(s.t, s.d)">다른 곳</button>
               </div>
               <div class="why">{{ s.o ? s.why : `${s.f.m} · ${s.why}` }}</div>
               <div v-if="s.cost" class="pr">{{ s.o ? '입장료' : '2인' }} {{ won(s.cost) }}원</div>
@@ -127,35 +115,7 @@ watch(() => state.course, () => { naming.value = false })
     </div>
 
     <div class="pf">
-      <!-- 저장 코스 상세엔 비용 데이터가 없다 - bud=0이면 0원/0원 거짓 표시 대신 숨긴다 -->
-      <template v-if="course.bud">
-        <div class="bh">
-          <span style="color:var(--tx2)">예상 경비</span>
-          <b class="tnum">{{ won(course.spent) }} / {{ won(course.bud) }}</b>
-        </div>
-        <div class="bar">
-          <i :style="{ width: spentPct + '%', background: rest < 0 ? 'var(--busy)' : 'var(--ac)' }"></i>
-        </div>
-        <div class="bn">
-          <template v-if="rest >= 0">
-            {{ won(rest) }}원 남아요 · 식비 ● 입장료 ● 실측 / 숙박·이동비 ○ 미포함
-          </template>
-          <template v-else>
-            <span style="color:var(--busy)">{{ won(-rest) }}원 넘었어요</span> · 식사를 더 저렴한 곳으로 바꿔보세요
-          </template>
-        </div>
-      </template>
 
-      <!-- MY_001: 코스 저장 (회원 전용). 이미 저장된 코스(saved)에는 저장 버튼이 무의미하다 -->
-      <div v-if="course.source !== 'saved'">
-        <div v-if="naming" class="savebox">
-          <input ref="nameInput" v-model="draftTitle" maxlength="60" placeholder="코스 이름"
-            @keydown.enter="confirmSave" @keydown.esc="naming = false">
-          <button @click="confirmSave">저장</button>
-        </div>
-        <button v-else-if="saved" class="save done">✓ 마이페이지에 저장됨</button>
-        <button v-else class="save" @click="startSave">이 코스 저장하기</button>
-      </div>
     </div>
   </div>
 </template>

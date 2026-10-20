@@ -33,7 +33,7 @@ public class MainController {
     public BaseResponse<List<CalmPlaceResponse>> calmPlaces(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
             @RequestParam(defaultValue = "7") @Min(1) @Max(20) int limit) {
-        LocalDate target = date != null ? date : LocalDate.now();
+        LocalDate target = date != null ? date : com.example.hangat.common.util.DateTimes.todayKst();
         return BaseResponse.success(mainService.calmPlaces(target, limit));
     }
 }

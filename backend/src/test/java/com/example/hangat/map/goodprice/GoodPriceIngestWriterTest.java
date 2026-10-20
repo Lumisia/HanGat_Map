@@ -6,7 +6,9 @@ import com.example.hangat.map.model.entity.DataSource;
 import com.example.hangat.map.model.entity.Place;
 import com.example.hangat.map.model.entity.PlaceCategory;
 import com.example.hangat.map.model.entity.Region;
+import com.example.hangat.map.model.enums.BusinessStatus;
 import com.example.hangat.map.repository.PlaceRepository;
+import com.example.hangat.map.service.PlaceNameNormalizer;
 import com.example.hangat.map.service.RegionResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,7 +20,9 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.math.BigDecimal;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -128,5 +132,64 @@ class GoodPriceIngestWriterTest {
                 new GeoPoint(new BigDecimal("33.95"), new BigDecimal("126.30")));
 
         assertThat(inserted).isFalse();
+    }
+
+    private static GeoPoint geo() {
+        return new GeoPoint(new BigDecimal("33.48"), new BigDecimal("126.40"));
+    }
+
+    private Place saved(String name) {
+        return placeRepository.findByNormalizedName(PlaceNameNormalizer.normalize(name)).get(0);
+    }
+
+    @Test
+    void CSV_내용이_바뀌면_가격_문단과_기준일을_갱신하고_같은_내용은_멱등이다() {
+        writer.insertNew(row("강김밥집", "제주시 애월읍 하귀9길 2"), geo());
+        em.flush();
+
+        Row changed = new Row("제주시", "한식", "강김밥집", "064-000-0000", "제주시 애월읍 하귀9길 2", List.of("강김밥 3,500원"));
+        assertThat(writer.upsertMatched(changed)).isEqualTo(GoodPriceIngestWriter.Outcome.REFRESHED);
+        assertThat(writer.upsertMatched(changed)).isEqualTo(GoodPriceIngestWriter.Outcome.ALREADY);
+
+        assertThat(saved("강김밥집").getOverview()).contains("3,500원").doesNotContain("2,900원");
+    }
+
+    @Test
+    void CSV에서_빠진_업소는_지정을_해제하고_가격_문단을_지운다() {
+        String[] names = {"가김밥집", "나김밥집", "다김밥집", "라김밥집", "마김밥집"};
+        Set<String> seen = new HashSet<>();
+        for (int i = 0; i < names.length; i++) {
+            Row r = row(names[i], "제주시 애월읍 하귀9길 " + (i + 1));
+            writer.insertNew(r, geo());
+            if (i > 0) seen.add(GoodPriceIngestWriter.sourceIdOf(r));   // 첫 가게만 CSV 에서 빠졌다
+        }
+        em.flush();
+
+        GoodPriceIngestWriter.ClearResult r = writer.clearMissing(seen);
+        em.flush();
+        em.clear();
+
+        assertThat(r.cleared()).isEqualTo(1);
+        Place gone = saved("가김밥집");
+        assertThat(gone.isGoodPrice()).isFalse();
+        assertThat(gone.getGoodPriceBaseDate()).isNull();
+        assertThat(gone.getOverview()).isNull();
+        // 지정 해제는 폐업이 아니다 - 상태는 건드리지 않는다
+        assertThat(gone.getBusinessStatus()).isEqualTo(BusinessStatus.UNKNOWN);
+        assertThat(saved("나김밥집").isGoodPrice()).isTrue();
+    }
+
+    @Test
+    void CSV_수신이_부족하면_해제를_보류한다() {
+        String[] names = {"가김밥집", "나김밥집", "다김밥집", "라김밥집", "마김밥집"};
+        for (int i = 0; i < names.length; i++) {
+            writer.insertNew(row(names[i], "제주시 애월읍 하귀9길 " + (i + 1)), geo());
+        }
+        em.flush();
+
+        GoodPriceIngestWriter.ClearResult r = writer.clearMissing(Set.of());
+
+        assertThat(r.skipped()).isTrue();
+        assertThat(saved("가김밥집").isGoodPrice()).isTrue();
     }
 }

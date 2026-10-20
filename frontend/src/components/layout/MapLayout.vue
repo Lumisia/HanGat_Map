@@ -37,4 +37,4 @@ onBeforeUnmount(() => { document.body.style.overflow = '' })
 }
 </style>
 
-<style src="../../assets/hangat.css"></style>
+<style src="../../assets/styles/hangat.css"></style>

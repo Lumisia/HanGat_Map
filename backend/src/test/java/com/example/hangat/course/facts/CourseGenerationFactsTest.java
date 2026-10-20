@@ -1,6 +1,6 @@
 package com.example.hangat.course.facts;
 
-import com.example.hangat.course.model.CongestionLevel;
+import com.example.hangat.map.model.enums.CongestionLevel;
 import com.example.hangat.course.model.PreferenceType;
 import com.example.hangat.course.model.Transport;
 import org.junit.jupiter.api.Test;

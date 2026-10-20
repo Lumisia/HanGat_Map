@@ -6,7 +6,10 @@ import lombok.Builder;
 import lombok.Getter;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import java.util.List;
+import com.example.hangat.user.model.User;
 
 /**
  * 후기 응답 - 작성 결과와 장소별 목록에서 같은 응답 형식을 사용한다.
@@ -21,6 +24,8 @@ public class ReviewResponse {
     private final Long userId;
     /** 작성자 닉네임. 탈퇴 등으로 유저가 없으면 null - 화면이 대체 표기한다 */
     private final String nickname;
+    /** 작성자의 현재 공개 프로필 사진. 미등록·탈퇴·정지 계정이면 null이다. */
+    private final String profileImageUrl;
     /** null = 별점 없이 혼잡 제보만 한 후기 */
     private final Byte rating;
     /** QUIET/NORMAL/CROWDED 또는 null */
@@ -28,21 +33,27 @@ public class ReviewResponse {
     private final String content;
     private final List<String> imageUrls;
     private final LocalDateTime createdAt;
+    private final LocalDateTime editedAt;
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
+    private final OffsetDateTime editableUntil;
 
     // ────────────────────────── 응답 변환 ──────────────────────────
 
     /** 조회한 사진 순서를 유지하고 닉네임·선택 입력의 null을 그대로 응답에 반영한다. */
-    public static ReviewResponse from(Review review, List<ReviewImage> images, String nickname) {
+    public static ReviewResponse from(Review review, List<ReviewImage> images, User author) {
         return ReviewResponse.builder()
                 .id(review.getId())
                 .userId(review.getUserId())
-                .nickname(nickname)
+                .nickname(author == null ? null : author.getNickname())
+                .profileImageUrl(author == null ? null : author.publicProfileImageUrl())
                 .rating(review.getRating())
                 .congestionReport(review.getCongestionReport() == null
                         ? null : review.getCongestionReport().name())
                 .content(review.getContent())
                 .imageUrls(images.stream().map(ReviewImage::getImageUrl).toList())
                 .createdAt(review.getCreatedAt())
+                .editedAt(review.getEditedAt())
+                .editableUntil(review.editableUntil())
                 .build();
     }
 }

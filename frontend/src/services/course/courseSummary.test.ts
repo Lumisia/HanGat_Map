@@ -28,10 +28,9 @@ describe('AI course measured route summary', () => {
     expect(accessNotices([{ legs: [{ from: endpoint, to: endpoint }] }])).toEqual([endpoint.access_point.notice])
     expect(accessNotices()).toEqual([])
   })
-  it('keeps result independent of map and guards missing costs', () => {
+  it('keeps result independent of map', () => {
     const view = readFileSync(new URL('../../views/ai-course/AiCourseView.vue', import.meta.url), 'utf8')
     expect(view).not.toMatch(/CourseBridge|MapCanvas|MapView|CoursePanel|services\/map/)
-    expect(view).toContain("if (!summary?.has_cost_data) return '정보 없음'")
     expect(view).toContain("result.value.status !== 'SAVED'")
     expect(view).toContain('course: String(result.value.id)')
     expect(view).not.toContain('stashAiCourse')

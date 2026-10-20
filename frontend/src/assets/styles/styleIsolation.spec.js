@@ -25,6 +25,9 @@ function contrastRatio(foreground, background) {
 
 let builtCss = ''
 
+// viteCsp.spec.js와 같은 이유로 훅 기본 10초에 기대지 않는다 - 여기도 실제 프로덕션 빌드를 돈다.
+const BUILD_TIMEOUT_MS = 60_000
+
 beforeAll(async () => {
   const result = await build({
     root: frontendRoot,
@@ -36,7 +39,7 @@ beforeAll(async () => {
     .filter(item => item.type === 'asset' && item.fileName.endsWith('.css'))
     .map(item => String(item.source))
     .join('\n')
-})
+}, BUILD_TIMEOUT_MS)
 
 describe('page CSS ownership', () => {
   it('keeps content and map rules inside their layout scopes in the production CSS', () => {
@@ -47,9 +50,10 @@ describe('page CSS ownership', () => {
   it('ships the complete map controls with valid responsive offsets', () => {
     expect(builtCss).not.toContain('5var(')
     for (const selector of [
-      '.seg button{', '#cond-body{', '.cal-h button', '.savebox input{',
-      '.savebox button{', '.map-lightbox img', '.acts button{', '.rv-star button{',
-      '.rv-c button{', '.rv-in input{', '.rv-in button{', '.sb-eg button{',
+      // .savebox 는 지도 패널의 로컬 코스 저장 UI 였고 2026-09-07 죽은 코드로 제거됐다
+      '.seg button{', '#cond-body{', '.cal-h button',
+      '.map-lightbox img', '.acts button{', '.rv-star button{',
+      '.rv-strip li button{', '.rv-in input{', '.rv-in button{', '.sb-eg button{',
       '.ftr button{'
     ]) expect(builtCss).toContain(selector)
   })

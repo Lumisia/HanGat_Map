@@ -11,7 +11,7 @@ import com.example.hangat.course.ai.CourseAiInputDto.TourCategoryDto;
 import com.example.hangat.course.ai.CourseAiInputDto.TravelFactDto;
 import com.example.hangat.course.ai.CourseAiInputDto.TripConditionDto;
 import com.example.hangat.course.ai.CourseAiInputDto.UserPreferencesDto;
-import com.example.hangat.course.model.CongestionLevel;
+import com.example.hangat.map.model.enums.CongestionLevel;
 import com.example.hangat.course.model.GenerationReason;
 import com.example.hangat.course.model.PreferenceType;
 import com.example.hangat.course.model.Transport;
@@ -55,6 +55,56 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 class GeminiCourseAiProviderTest {
+
+    @Test
+    void promptSerializationDoesNotRetainSensitiveCause() throws Exception {
+        ObjectMapper failingMapper = org.mockito.Mockito.mock(ObjectMapper.class);
+        when(failingMapper.writeValueAsString(org.mockito.ArgumentMatchers.any()))
+                .thenThrow(new com.fasterxml.jackson.core.JsonProcessingException("private-prompt api-key") { });
+        GeminiCourseAiProvider provider = provider(RestClient.create(), "test-secret", new CourseAiPrompt(failingMapper));
+        assertThatThrownBy(() -> provider.generate(input()))
+                .isInstanceOfSatisfying(CourseAiException.class, failure -> {
+                    assertThat(failure.getCause()).isNull();
+                    assertThat(failure.getDiagnostic().phase()).isEqualTo(CourseAiDiagnostic.Phase.BUILD_REQUEST);
+                    assertThat(failure.getDiagnostic().attempts()).isZero();
+                });
+    }
+
+    @Test
+    void rejectsSensitiveTextHiddenInProviderCodeFields() {
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://gemini.test/v1beta");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(once(), requestTo("http://gemini.test/v1beta/models/gemini-test:generateContent"))
+                .andRespond(withStatus(org.springframework.http.HttpStatus.BAD_REQUEST)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("""
+                            {"error":{"code":400,"message":"private-prompt",
+                            "status":"private-prompt","details":[{"reason":"test-secret"}]}}
+                            """));
+        assertThatThrownBy(() -> provider(builder.build(), "test-secret").generate(input()))
+                .isInstanceOfSatisfying(CourseAiException.class, failure -> {
+                    assertThat(failure.getMessage()).contains("HTTP_STATUS=400")
+                            .doesNotContain("private-prompt", "test-secret");
+                    assertThat(failure.getCause()).isNull();
+                    assertThat(failure.getDiagnostic().googleStatus()).isEqualTo("OTHER");
+                    assertThat(failure.getDiagnostic().googleReason()).isEqualTo("OTHER");
+                });
+    }
+
+    @Test
+    void malformedResultDoesNotRetainParserCauseContainingResponse() {
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://gemini.test/v1beta");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(once(), requestTo("http://gemini.test/v1beta/models/gemini-test:generateContent"))
+                .andRespond(withSuccess("""
+                        {"candidates":[{"content":{"parts":[{"text":"private-response-not-json"}]}}]}
+                        """, MediaType.APPLICATION_JSON));
+        assertThatThrownBy(() -> provider(builder.build(), "test-secret").generate(input()))
+                .isInstanceOfSatisfying(CourseAiException.class, failure -> {
+                    assertThat(failure.getCause()).isNull();
+                    assertThat(failure.getMessage()).doesNotContain("private-response-not-json");
+                });
+    }
 
     private final ObjectMapper objectMapper = new ObjectMapper()
             .registerModule(new JavaTimeModule())
@@ -576,6 +626,10 @@ class GeminiCourseAiProviderTest {
                             .contains("MODEL=gemini-test")
                             .doesNotContain("sensitive upstream detail")
                             .doesNotContain("test-secret");
+                    assertThat(exception.getDiagnostic().httpStatus()).isEqualTo(status);
+                    assertThat(exception.getDiagnostic().attempts()).isEqualTo(attempts);
+                    assertThat(exception.getDiagnostic().googleStatus()).isEqualTo(googleStatus);
+                    assertThat(exception.getDiagnostic().googleReason()).isEqualTo(googleReason);
                 });
         server.verify();
     }
@@ -673,7 +727,7 @@ class GeminiCourseAiProviderTest {
                 "1.0",
                 new TripConditionDto(
                         LocalDate.parse("2026-08-27"), LocalDate.parse("2026-08-29"),
-                        2, 500000, Transport.RENTAL_CAR),
+                        2,  Transport.RENTAL_CAR),
                 new UserPreferencesDto(List.of(), List.of(), List.of(), List.of(), null),
                 List.of(), List.of(), null);
     }
@@ -703,7 +757,7 @@ class GeminiCourseAiProviderTest {
 
         return new CourseAiInputDto(
                 "1.0",
-                new TripConditionDto(firstDay, firstDay.plusDays(1), 2, 300000, Transport.RENTAL_CAR),
+                new TripConditionDto(firstDay, firstDay.plusDays(1), 2,  Transport.RENTAL_CAR),
                 new UserPreferencesDto(
                         List.of(new SelectedRegionDto(null, "EAST", "동부")),
                         List.of(

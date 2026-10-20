@@ -5,11 +5,13 @@ import com.example.hangat.course.model.CongestionDto;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
+import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 
@@ -22,8 +24,21 @@ public class CongestionApiService {
     @Value("${congestion-api.service-key}")
     private String serviceKey;
 
-    private final RestClient restClient = RestClient.create();
+    private final RestClient restClient;
+    private final KtoRequests requests;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    public CongestionApiService() {
+        this(Duration.ofSeconds(3), Duration.ofSeconds(10));
+    }
+
+    @Autowired
+    public CongestionApiService(
+            @Value("${congestion-api.connect-timeout:3s}") Duration connectTimeout,
+            @Value("${congestion-api.read-timeout:10s}") Duration readTimeout) {
+        restClient = KtoRequests.client(connectTimeout, readTimeout);
+        requests = new KtoRequests(connectTimeout.plus(readTimeout), Thread::sleep);
+    }
 
     public List<CongestionDto> getCongestionData(
             String signguCd,
@@ -48,10 +63,11 @@ public class CongestionApiService {
                 )
                 .toUri();
 
-        String response = restClient.get()
+        // 본문 읽기까지 제한하고, 작업 만료/종료로 인터럽트되면 대기 중인 외부 요청도 취소한다.
+        String response = requests.execute(1, () -> restClient.get()
                 .uri(uri)
                 .retrieve()
-                .body(String.class);
+                .body(String.class));
 
         try {
             if (response == null || response.isBlank()) {

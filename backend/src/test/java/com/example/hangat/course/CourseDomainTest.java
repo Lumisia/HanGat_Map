@@ -128,7 +128,7 @@ class CourseDomainTest {
                 .plannedCongestionForecast(혼인지예보)
                 .recommendationScore(new BigDecimal("87.1234"))
                 .recommendationReasonCode("CONGESTION")
-                .recommendationReason("이 날짜 혼잡 예보가 여유예요")
+                .recommendationReason("이 날짜 혼잡 예보가 한산이에요")
                 .build());
         costRepository.save(CourseItemCost.unknown(course, 둘째, CostCategory.ACTIVITY));
         em.flush();

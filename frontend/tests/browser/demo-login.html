@@ -1,0 +1,8 @@
+<!doctype html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="app"></div><script type="module">
+import {createApp,h} from 'vue';import {createPinia} from 'pinia';import {createRouter,createMemoryHistory,RouterView} from 'vue-router';
+import Login from '/src/views/auth/LoginView.vue';
+import '/src/assets/styles/fonts.css';import '/src/assets/styles/tokens.css';import '/src/assets/styles/base.css';import '/src/assets/styles.css';
+const router=createRouter({history:createMemoryHistory(),routes:[{path:'/login',component:Login},{path:'/:pathMatch(.*)*',component:{render:()=>h('h1','로그인 후 이동 화면')}}]});
+await router.push('/login'+location.search);window.qaRouter=router;
+createApp({render:()=>h(RouterView)}).use(createPinia()).use(router).mount('#app');
+</script></body></html>

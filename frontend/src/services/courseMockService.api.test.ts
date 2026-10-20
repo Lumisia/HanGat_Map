@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AlternativePlace, CourseCondition, CourseItem, CourseResult } from '../assets/types/course'
 import { apiRequest } from '../api/backendClient.js'
 import { ApiError } from '../api/errors.js'
@@ -9,12 +9,14 @@ import {
 } from './courseMockService'
 
 vi.mock('../api/backendClient.js', () => ({ apiRequest: vi.fn() }))
+const flags = vi.hoisted(() => ({ async: true }))
+vi.mock('../api/notifications.js', () => ({ get ASYNC_COURSES_ENABLED() { return flags.async } }))
 
 const condition: CourseCondition = {
   start_date: '2026-08-28',
   end_date: '2026-08-29',
   people: 2,
-  budget_total: 400000,
+
   transport: 'RENTAL_CAR',
   course_regions: [{ region_id: 1, code: 'EAST', name: '동부' }],
   course_styles: [{ tag_id: 1, code: 'NATURE', name: '자연', weight: 1 }],
@@ -39,10 +41,10 @@ const response: CourseResult = {
   start_date: condition.start_date,
   end_date: condition.end_date,
   people: condition.people,
-  budget_total: condition.budget_total,
+
   budget_summary: {
     has_cost_data: false,
-    budget_total: condition.budget_total,
+
     verified_total: 0,
     unknown_count: 0,
   },
@@ -93,7 +95,37 @@ const itineraryContract = (course: CourseResult) => course.days.flatMap(day =>
 
 afterEach(() => vi.clearAllMocks())
 
-describe('courseMockService Backend generation', () => {
+describe.each([true, false])('courseMockService Backend generation (async=%s)', enabled => {
+  beforeEach(() => { flags.async = enabled })
+  it('refuses save without proof and never reports an expired server claim as saved', async () => {
+    const mock = vi.mocked(apiRequest)
+    await expect(courseMockService.saveCourse(response, '제주')).rejects.toThrow('저장 권한')
+    expect(mock).not.toHaveBeenCalled()
+    const withProof = { ...response, claim_token: 'test-proof' }
+    mock.mockRejectedValueOnce(new ApiError(410, 3309, '만료'))
+    await expect(courseMockService.saveCourse(withProof, '제주')).rejects.toThrow('만료')
+    expect(withProof.status).toBe('READY')
+    mock.mockResolvedValueOnce({ id: response.id, status: 'READY' })
+    await expect(courseMockService.saveCourse(withProof, '제주')).rejects.toThrow('저장을 확인')
+  })
+
+  it('preserves provider-only WANT in both synchronous and asynchronous regeneration payloads', async () => {
+    const previous = structuredClone(response)
+    previous.days[0]!.items[0]!.source_code = 'KAKAO_LOCAL'
+    previous.days[0]!.items[0]!.source_place_id = 'real-place'
+    const wanted: CourseCondition = { ...condition, course_place_preferences: [{
+      source_code: 'KAKAO_LOCAL', source_place_id: 'real-place',
+      place_name: '필수 장소', preference_type: 'WANT',
+    }] }
+    expect(toCourseRequestPayload(wanted, true, previous).course_place_preferences)
+      .toEqual(wanted.course_place_preferences)
+    vi.mocked(apiRequest).mockResolvedValueOnce(previous)
+    await courseMockService.regenerateCourse(wanted, previous)
+    expect(vi.mocked(apiRequest).mock.calls[0]?.[1]?.body).toMatchObject({
+      course_place_preferences: wanted.course_place_preferences,
+    })
+    expect(wanted.course_place_preferences).toHaveLength(1)
+  })
   it('posts the unchanged CourseCondition and returns the Backend CourseResult without fabricating data', async () => {
     const requestMock = vi.mocked(apiRequest).mockResolvedValue(response)
 
@@ -131,7 +163,7 @@ describe('courseMockService Backend generation', () => {
     expect(result.estimated_cost_min).toBeUndefined()
     expect(result.budget_summary).toEqual({
       has_cost_data: false,
-      budget_total: 400000,
+
       verified_total: 0,
       unknown_count: 0,
     })
@@ -207,6 +239,7 @@ describe('courseMockService Backend generation', () => {
     expect(requestMock).toHaveBeenCalledWith('/courses/101/accommodation', {
       method: 'PATCH',
       auth: false,
+      ...(enabled ? { optionalAuth: true } : {}),
       body: {
         accommodation: condition.accommodation,
         claim_token: 'opaque-proof',
@@ -262,6 +295,7 @@ describe('courseMockService Backend generation', () => {
     expect(requestMock).toHaveBeenCalledWith('/courses/101/accommodations/search', {
       method: 'POST',
       auth: false,
+      ...(enabled ? { optionalAuth: true } : {}),
       body: { claim_token: 'opaque-proof' },
     })
     expect(recommendations).toEqual([expect.objectContaining({
@@ -299,6 +333,7 @@ describe('courseMockService Backend generation', () => {
     expect(requestMock).toHaveBeenCalledWith('/courses/101/routes/car', {
       method: 'GET',
       auth: false,
+      ...(enabled ? { optionalAuth: true } : {}),
     })
     expect(response).toEqual(before)
   })
@@ -334,6 +369,7 @@ describe('courseMockService Backend generation', () => {
     expect(requestMock).toHaveBeenCalledWith('/courses/101/accommodation', {
       method: 'PATCH',
       auth: true,
+      ...(enabled ? { optionalAuth: true } : {}),
       body: { accommodation: condition.accommodation },
     })
   })
@@ -362,11 +398,28 @@ describe('courseMockService Backend generation', () => {
     )
   })
 
-  it('keeps regeneration unavailable instead of sending an INITIAL request or returning mock data', async () => {
-    const requestMock = vi.mocked(apiRequest)
+  it('shows a safe 400 field error instead of hiding it behind a generic message', () => {
+    const error = Object.assign(new ApiError(
+      400,
+      3000,
+      '입력값을 확인해주세요.',
+    ), { detail: { accommodation: '선택한 숙소의 Kakao identity를 확인할 수 없습니다.' } })
 
-    await expect(courseMockService.regenerateCourse(condition)).rejects.toThrow('재생성은 아직 지원되지 않습니다')
-    expect(requestMock).not.toHaveBeenCalled()
+    expect(courseGenerationErrorMessage(error)).toBe(
+      '선택한 숙소의 Kakao identity를 확인할 수 없습니다.',
+    )
+  })
+
+  it('regenerates with the same conditions through the real course API without mock data', async () => {
+    const requestMock = vi.mocked(apiRequest).mockResolvedValue(response)
+
+    await expect(courseMockService.regenerateCourse(condition, response)).resolves.toMatchObject({ id: 101 })
+    expect(requestMock).toHaveBeenCalledOnce()
+    expect(requestMock.mock.calls[0]?.[0]).toBe('/courses')
+    expect(requestMock.mock.calls[0]?.[1]?.body).toMatchObject({ regenerate: true })
+    expect((requestMock.mock.calls[0]?.[1]?.body as CourseCondition).course_place_preferences)
+      .toEqual(expect.arrayContaining(response.days.flatMap(day => day.items).map(item =>
+        expect.objectContaining({ place_id: item.place_id, preference_type: 'AVOID' }))))
   })
 
   it('claims a generated guest course with authenticated API and removes the proof from the result', async () => {
@@ -396,7 +449,8 @@ describe('courseMockService Backend generation', () => {
   })
 })
 
-describe('alternative places and swap (backend, 담당 정동현)', () => {
+describe.each([true, false])('alternative places and swap (async=%s)', enabled => {
+  beforeEach(() => { flags.async = enabled })
   const item = (id: number, place_id: number, place_name: string, extra: Partial<CourseItem> = {}): CourseItem => ({
     id, course_id: 101, place_id, place_name, category_name: '관광지', day_no: 1, position: id, visit_date: '2026-08-28',
     start_time: '09:00', end_time: '11:00', item_source: 'AI_RECOMMENDED', costs: [], latitude: 33.46, longitude: 126.94, ...extra,
@@ -417,7 +471,7 @@ describe('alternative places and swap (backend, 담당 정동현)', () => {
   })
   const alternative: AlternativePlace = {
     place_id: 601, place_name: '두산봉', category_name: '관광지', distance_m: 4200, congestion_rate: 21, congestion_level: 'QUIET',
-    recommendation_reason: '이 날짜 혼잡 예보가 여유예요', replacement_reason: '성산일출봉보다 집중률이 61 낮고 4.2km 거리예요', radius_km: 10,
+    recommendation_reason: '이 날짜 혼잡 예보가 한산이에요', replacement_reason: '성산일출봉보다 집중률이 61 낮고 4.2km 거리예요', radius_km: 10,
   }
 
   it('asks the backend with the visit date and the other course places excluded, then drops AVOID places only', async () => {
@@ -427,10 +481,13 @@ describe('alternative places and swap (backend, 담당 정동현)', () => {
     ])
     const avoiding: CourseCondition = { ...condition, course_place_preferences: [{ place_id: 602, place_name: '대수산봉', preference_type: 'AVOID' }] }
 
-    const result = await courseMockService.getAlternativePlaces(course(), 1, avoiding)
+    const original = course()
+    const datesBefore = original.days.map(day => ({ date: day.visit_date, slots: day.items.map(item => [item.visit_date, item.start_time, item.end_time]) }))
+    const result = await courseMockService.getAlternativePlaces(original, 1, avoiding)
 
     expect(requestMock).toHaveBeenCalledWith('/places/501/alternatives?date=2026-08-28&limit=3&exclude=502')
     expect(result.map(candidate => candidate.place_id)).toEqual([601])
+    expect(original.days.map(day => ({ date: day.visit_date, slots: day.items.map(item => [item.visit_date, item.start_time, item.end_time]) }))).toEqual(datesBefore)
   })
 
   it('passes a 3401 (no forecast for that date) through instead of pretending there are no alternatives', async () => {
@@ -444,12 +501,12 @@ describe('alternative places and swap (backend, 담당 정동현)', () => {
       course_id: 101,
       average_congestion_rate: 39.5,
       congestion_level: 'QUIET',
-      congestion_label: '여유',
+      congestion_label: '한산',
       message: '두산봉으로 바꿨어요',
       updated_items: [
         {
           item_id: 1, day_no: 1, position: 1, visit_date: '2026-08-28', place_id: 601, place_name: '두산봉', category_name: '관광지', image_url: 'https://img/601.jpg',
-          congestion_rate: 21, congestion_level: 'QUIET', congestion_label: '여유', recommendation_reason: '성산일출봉보다 집중률이 61 낮고 4.2km 거리예요',
+          congestion_rate: 21, congestion_level: 'QUIET', congestion_label: '한산', recommendation_reason: '성산일출봉보다 집중률이 61 낮고 4.2km 거리예요',
           replaced_from_place_id: 501, replaced_from_place_name: '성산일출봉', inbound_distance_m: null, inbound_travel_minutes: null,
         },
         {
@@ -462,8 +519,10 @@ describe('alternative places and swap (backend, 담당 정동현)', () => {
     const before = course()
 
     const replaced = await courseMockService.replaceCourseItem(before, 1, alternative)
+    expect(replaced.days.map(day => ({ date: day.visit_date, slots: day.items.map(item => [item.visit_date, item.start_time, item.end_time]) })))
+      .toEqual(before.days.map(day => ({ date: day.visit_date, slots: day.items.map(item => [item.visit_date, item.start_time, item.end_time]) })))
 
-    expect(requestMock).toHaveBeenCalledWith('/courses/101/items/1/swap', { method: 'POST', body: { place_id: 601 }, auth: false })
+    expect(requestMock).toHaveBeenCalledWith('/courses/101/items/1/swap', { method: 'POST', body: { place_id: 601 }, auth: false, ...(enabled ? { optionalAuth: true } : {}) })
     const changed = replaced.days[0].items[0]
     expect(changed).toMatchObject({
       id: 1, place_id: 601, place_name: '두산봉', item_source: 'REPLACEMENT', replaced_from_place_id: 501,
@@ -483,5 +542,27 @@ describe('alternative places and swap (backend, 담당 정동현)', () => {
     await courseMockService.replaceCourseItem(course('SAVED'), 1, alternative)
 
     expect(requestMock).toHaveBeenCalledWith('/courses/101/items/1/swap', expect.objectContaining({ auth: true }))
+  })
+
+  it('replaces the old budget and item cost with the authoritative swap result', async () => {
+    const summary = { has_cost_data: true, verified_total: 0,
+      estimated_min: 24000, estimated_max: 24000, total_expected_min: 24000,
+      total_expected_max: 24000, unknown_count: 1 }
+    const cost = { id: 9, course_id: 101, course_item_id: 1, category: 'FOOD', accuracy_type: 'ESTIMATED',
+      amount_min: 24000, amount_max: 24000, currency: 'KRW', basis_text: '대표메뉴 × 2명' }
+    vi.mocked(apiRequest).mockResolvedValue({ course_id: 101, budget_summary: summary, updated_items: [
+      { item_id: 1, place_id: 601, place_name: '새 장소', costs: [cost] },
+    ] })
+    const result = await courseMockService.replaceCourseItem(course('SAVED'), 1, alternative)
+    expect(result.budget_summary).toEqual(summary)
+    expect(result.estimated_cost_max).toBe(24000)
+    expect(result.days[0].items[0].costs).toEqual([cost])
+    vi.mocked(apiRequest).mockResolvedValue({ course_id: 101, budget_summary: {
+      has_cost_data: false, total_expected_min: null, total_expected_max: null,
+    }, updated_items: [{ item_id: 1, place_id: 602, place_name: '가격 미상', costs: [] }] })
+    const unknown = await courseMockService.replaceCourseItem(result, 1, { ...alternative, place_id: 602 })
+    expect(unknown.budget_summary?.has_cost_data).toBe(false)
+    expect(unknown.estimated_cost_max).toBeNull()
+    expect(unknown.days[0].items[0].costs).toEqual([])
   })
 })

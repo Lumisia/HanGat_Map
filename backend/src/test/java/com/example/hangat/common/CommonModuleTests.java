@@ -15,6 +15,14 @@ class CommonModuleTests {
 
     private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
 
+    @org.junit.jupiter.api.Test
+    void expiredCourseUsesGoneWithoutLeakingDetails() {
+        var response = handler.handleBaseException(
+                new BaseException(BaseResponseStatus.COURSE_EXPIRED, "private"));
+        org.assertj.core.api.Assertions.assertThat(response.getStatusCode().value()).isEqualTo(410);
+        org.assertj.core.api.Assertions.assertThat(response.getBody().getCode()).isEqualTo(3309);
+    }
+
     @Test
     void 성공_응답은_2000_코드를_가진다() {
         BaseResponse<String> response = BaseResponse.success("ok");

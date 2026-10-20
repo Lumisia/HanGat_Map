@@ -130,7 +130,7 @@ class CourseAiResultValidatorContractTest {
         assertInvalid(input(), result(List.of(day("2026-08-28",
                         new ItemDto("want-1", LocalTime.of(9, 0), "가".repeat(301))))),
                 CourseAiValidationCode.AI_RESULT_REASON_TOO_LONG);
-        assertThatCode(() -> validator.validate(input(), result(List.of(day("2026-08-28",
+        assertThatCode(() -> validator.validate(singleDayInput(), result(List.of(day("2026-08-28",
                         new ItemDto("want-1", LocalTime.of(9, 0), "가".repeat(300)))))))
                 .doesNotThrowAnyException();
     }
@@ -145,17 +145,16 @@ class CourseAiResultValidatorContractTest {
                 CourseAiValidationCode.AI_RESULT_FIXED_TIME_CHANGED);
         CourseAiResultDto fixedResult = result(List.of(
                 day("2026-08-28", item("want-1", "09:00"))));
-        assertThatCode(() -> validator.validate(input(), fixedResult))
+        assertThatCode(() -> validator.validate(singleDayInput(), fixedResult))
                 .doesNotThrowAnyException();
     }
 
     @Test
-    void acceptsValidOrderedMultiDayResultWithoutRequiringEveryTripDate() {
+    void rejectsOrderedResultMissingTheFirstTripDate() {
         CourseAiResultDto multiDayResult = result(List.of(
                 day("2026-08-28", item("want-1", "09:00"), item("normal-1", "11:00")),
                 day("2026-08-29", item("normal-2", "10:00"))));
-        assertThatCode(() -> validator.validate(input(), multiDayResult))
-                .doesNotThrowAnyException();
+        assertInvalid(input(), multiDayResult, CourseAiValidationCode.AI_RESULT_TRIP_DATE_MISSING);
     }
 
     @Test
@@ -195,7 +194,7 @@ class CourseAiResultValidatorContractTest {
         CourseAiResultDto twoPlaceResult = result(List.of(
                 day("2026-08-28", item("want-1", "09:00"), item("normal-1", "14:00"))));
 
-        assertThatCode(() -> validator.validate(input(), twoPlaceResult))
+        assertThatCode(() -> validator.validate(singleDayInput(), twoPlaceResult))
                 .doesNotThrowAnyException();
     }
 
@@ -235,11 +234,19 @@ class CourseAiResultValidatorContractTest {
         return new CourseAiInputDto(
                 "2.0",
                 new TripConditionDto(date("2026-08-27"), date("2026-08-29"),
-                        2, 500000, Transport.RENTAL_CAR),
+                        2,  Transport.RENTAL_CAR),
                 new UserPreferencesDto(List.of(), List.of(), List.of(required), List.of(), null),
                 List.of(candidate("want-1", "성산일출봉"),
                         candidate("normal-1", "만장굴"), candidate("normal-2", "비자림")),
                 List.of(), null);
+    }
+
+    private CourseAiInputDto singleDayInput() {
+        CourseAiInputDto base = input();
+        return new CourseAiInputDto(base.contractVersion(),
+                new TripConditionDto(date("2026-08-28"), date("2026-08-28"), 2,
+                        Transport.RENTAL_CAR), base.userPreferences(), base.candidates(),
+                base.travelFacts(), base.generationMetadata());
     }
 
     private CandidateFactDto candidate(String id, String name) {

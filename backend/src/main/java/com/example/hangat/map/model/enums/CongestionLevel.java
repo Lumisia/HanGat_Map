@@ -18,7 +18,7 @@ import java.math.BigDecimal;
 public enum CongestionLevel {
 
     /** 이 곳 최성수기의 40% 미만. */
-    QUIET("여유"),
+    QUIET("한산"),
 
     NORMAL("보통"),
 
@@ -39,7 +39,7 @@ public enum CongestionLevel {
         return label;
     }
 
-    /** 경계값은 실측 분위수(25%=37.6 / 75%=71.1)에 맞춘 초안이다 - 화면 확인 후 조정 가능. */
+    /** 팀 공통 고정 경계값. 조회 결과의 분포로 다시 정규화하지 않는다. */
     private static final BigDecimal QUIET_MAX = new BigDecimal("40");
     private static final BigDecimal CROWDED_MIN = new BigDecimal("70");
 

@@ -24,7 +24,8 @@ public record CourseSwapResponse(
         String congestionLabel,
         List<SwappedItem> updatedItems,
         /** 화면 토스트 문구. */
-        String message
+        String message,
+        CourseResponseDto.BudgetSummaryDto budgetSummary
 ) {
 
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
@@ -46,10 +47,11 @@ public record CourseSwapResponse(
             Long replacedFromPlaceId,
             String replacedFromPlaceName,
             Integer inboundDistanceM,
-            Integer inboundTravelMinutes
+            Integer inboundTravelMinutes,
+            List<CourseResponseDto.CourseItemCostDto> costs
     ) {
 
-        public static SwappedItem of(CourseItem item, Double rate) {
+        public static SwappedItem of(CourseItem item, Double rate, List<CourseResponseDto.CourseItemCostDto> costs) {
             CongestionLevel level = rate == null
                     ? null : CongestionLevel.from(BigDecimal.valueOf(rate));
             return new SwappedItem(
@@ -71,7 +73,7 @@ public record CourseSwapResponse(
                             ? null : item.getReplacedFromPlace().getName(),
                     item.getInboundDistanceM(),
                     item.getInboundTravelMinutes() == null
-                            ? null : item.getInboundTravelMinutes().intValue()
+                            ? null : item.getInboundTravelMinutes().intValue(), costs
             );
         }
     }

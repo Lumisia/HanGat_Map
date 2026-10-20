@@ -71,6 +71,15 @@ public class OAuthAuthenticationSuccessHandler implements AuthenticationSuccessH
             SecurityContextHolder.clearContext();
 
             if(result.isLoginCompleted()) {
+                if (result.loginResult().recoveryRequired()) {
+                    cookieManager.clearRefreshCookie(response);
+                    cookieManager.clearOAuthFlowCookie(response);
+                    cookieManager.setRecoveryCookie(response, result.loginResult().rawRecoveryToken());
+                    response.setHeader("Cache-Control", "no-store");
+                    response.sendRedirect(frontendUrl + "/auth/withdrawal");
+                    return;
+                }
+                cookieManager.clearRecoveryCookie(response);
                 cookieManager.setRefreshCookie(
                         response,
                         result.loginResult()

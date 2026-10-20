@@ -9,7 +9,7 @@ import java.util.List;
 
 /**
  * 메뉴 청크 저장. 트랜잭션을 끊으려고 서비스와 분리한다 -
- * 사유는 {@link com.example.hangat.map.service.PlaceIngestWriter} 참고.
+ * 사유는 {@link com.example.hangat.map.place.PlaceIngestWriter} 참고.
  */
 @Component
 public class MenuIngestWriter {

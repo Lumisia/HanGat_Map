@@ -2,6 +2,8 @@ package com.example.hangat.user.model;
 
 import com.example.hangat.common.util.DateTimes;
 import com.example.hangat.common.util.EmailNormalizer;
+import com.example.hangat.common.exception.BaseException;
+import com.example.hangat.common.model.BaseResponseStatus;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -29,7 +31,11 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Builder
 @Getter
+// 닉네임 등 다른 프로필 정보의 동시 수정이 새 사진 키를 덮어쓰지 않도록 변경 컬럼만 갱신한다.
+@org.hibernate.annotations.DynamicUpdate
 public class User {
+    // 이미지 교체 시 새 파일명으로 바꿔 기존 브라우저 캐시와 구분한다.
+    public static final String DEMO_PROFILE_FILENAME = "d3e00001-2026-4000-8000-000000000001.png";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -52,6 +58,25 @@ public class User {
     @Column(name = "birth_date")
     private LocalDate birthDate;
 
+    /** 비공개 저장소 내부 키. 응답에는 MinIO 주소나 키 대신 백엔드 조회 경로를 내보낸다. */
+    @Column(name = "profile_image_key", length = 200)
+    private String profileImageKey;
+
+    /** 검증·저장이 끝난 사진으로 교체한다. 이전 파일 정리는 서비스가 커밋 후 처리한다. */
+    public void updateProfileImage(String key) {
+        if (isDemoAccount()) throw new BaseException(BaseResponseStatus.DEMO_PROFILE_IMAGE_LOCKED);
+        this.profileImageKey = key;
+    }
+
+    /** 리뷰와 내 정보에서 공통으로 쓰는 공개 사진 주소. 비활성 계정·미등록 사진은 노출하지 않는다. */
+    public String publicProfileImageUrl() {
+        if (id == null || status != UserStatus.ACTIVE) return null;
+        if (isDemoAccount()) return "/users/" + id + "/profile-image/" + DEMO_PROFILE_FILENAME;
+        if (profileImageKey == null) return null;
+        return "/users/" + id + "/profile-image/"
+                + profileImageKey.substring(profileImageKey.lastIndexOf('/') + 1);
+    }
+
     @Builder.Default
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -72,6 +97,9 @@ public class User {
     /** status=WITHDRAWN일 때만 값이 있어야 함 (DB CHECK) */
     @Column(name = "withdrawn_at")
     private LocalDateTime withdrawnAt;
+
+    @Column(name = "auth_version", nullable = false)
+    private long authVersion;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -131,6 +159,9 @@ public class User {
 
     /** 비밀번호 변경. 이미 인코딩된 값을 받음. 재설정도 사용자가 직접 정하므로 이거 하나로 끝 */
     public void changePassword(String encodedPassword) {
+        if (isDemoAccount()) {
+            throw new BaseException(BaseResponseStatus.DEMO_PASSWORD_LOCKED);
+        }
         this.password = encodedPassword;
         this.passwordChangedAt = DateTimes.nowUtc();
     }
@@ -155,11 +186,22 @@ public class User {
      * status와 withdrawnAt이 같이 움직여야 DB CHECK를 안 어김.
      */
     public void withdraw() {
+        withdrawAt(DateTimes.nowUtc());
+    }
+
+    public void withdrawAt(LocalDateTime at) {
         if (this.status == UserStatus.WITHDRAWN) {
             return; // 멱등
         }
         this.status = UserStatus.WITHDRAWN;
-        this.withdrawnAt = DateTimes.nowUtc();
+        this.withdrawnAt = at;
+        this.authVersion++;
+    }
+
+    public void cancelWithdrawal() {
+        if (this.status != UserStatus.WITHDRAWN) throw new BaseException(BaseResponseStatus.REQUEST_ERROR);
+        this.status = UserStatus.ACTIVE;
+        this.withdrawnAt = null;
     }
 
     // ────────────────────────── 조회 ──────────────────────────
@@ -172,6 +214,11 @@ public class User {
     /** 소셜 전용 계정 여부. 비번 로그인 시도 구분용 */
     public boolean hasPassword() {
         return this.password != null;
+    }
+
+    /** 심사용 단일 계정 정책. 닉네임이나 클라이언트 입력 플래그로 권한을 결정하지 않는다. */
+    public boolean isDemoAccount() {
+        return "demo@hangatjeju.com".equals(this.email);
     }
 
     /** 이메일 인증 완료 여부 (USER_002) */

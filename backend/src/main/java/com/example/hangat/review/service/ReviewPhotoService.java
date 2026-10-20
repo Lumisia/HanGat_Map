@@ -8,6 +8,9 @@ import com.example.hangat.common.storage.LocalFileStorage;
 import com.example.hangat.review.model.ReviewStatus;
 import com.example.hangat.review.model.ReviewPhotosDeleted;
 import com.example.hangat.review.repository.ReviewImageRepository;
+import com.example.hangat.user.repository.UserRepository;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
@@ -42,6 +45,7 @@ public class ReviewPhotoService {
     private final LocalFileStorage local;
     private final ImageValidator validator;
     private final ReviewImageRepository images;
+    private final UserRepository users;
 
     /** DB에 함께 기록할 전체 저장 키와 브라우저용 상대 URL이다. */
     public record Attachment(String key, String url) {}
@@ -49,11 +53,12 @@ public class ReviewPhotoService {
     /** 같은 저장소 타입의 빈이 둘이므로 Qualifier를 보존하는 생성자를 직접 유지한다. */
     public ReviewPhotoService(@Qualifier("imageStorage") FileStorage storage,
                               @Qualifier("localImageStorage") LocalFileStorage local,
-                              ImageValidator validator, ReviewImageRepository images) {
+                              ImageValidator validator, ReviewImageRepository images, UserRepository users) {
         this.storage = storage;
         this.local = local;
         this.validator = validator;
         this.images = images;
+        this.users = users;
     }
 
     // ────────────────────────── 사진 업로드 및 첨부 검증 ──────────────────────────
@@ -86,12 +91,16 @@ public class ReviewPhotoService {
     }
 
     /** 본인의 실제 업로드 파일만 허용하고 같은 사진의 중복 첨부와 URL 위조를 막는다. */
+    @Transactional(propagation = Propagation.MANDATORY)
     public List<Attachment> validateAttachments(List<String> urls, Long userId) {
         // 사진 없는 후기 작성도 기존처럼 허용한다.
         if (urls == null || urls.isEmpty()) return List.of();
 
         if (userId == null || userId <= 0 || urls.size() > ReviewService.MAX_IMAGES
                 || new HashSet<>(urls).size() != urls.size()) throw invalid();
+
+        // 정리 배치와 같은 잠금을 커밋까지 유지: 존재 확인 후 파일이 삭제되는 경쟁을 막는다.
+        if (users.findByIdForUpdate(userId).isEmpty()) throw invalid();
 
         List<Attachment> result = new ArrayList<>();
 

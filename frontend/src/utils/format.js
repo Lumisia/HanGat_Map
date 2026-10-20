@@ -2,6 +2,44 @@
 
 const DOW = '일월화수목금토'
 
+/** The user's current date is Korean, never the browser's local/UTC date. */
+export function todayKst (now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(now)
+  const part = type => parts.find(p => p.type === type).value
+  return `${part('year')}-${part('month')}-${part('day')}`
+}
+
+// Internal calendar arithmetic only: never serialize this temporary Date as a trip timestamp.
+function calendarValue (value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new RangeError('Invalid calendar date')
+  const [year, month, day] = value.split('-').map(Number)
+  const date = new Date(Date.UTC(year, month - 1, day))
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    throw new RangeError('Invalid calendar date')
+  }
+  return date
+}
+
+export function addCalendarDays (value, days) {
+  const date = calendarValue(value)
+  date.setUTCDate(date.getUTCDate() + days)
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`
+}
+
+export const calendarDayOffset = (start, end) => (calendarValue(end) - calendarValue(start)) / 86400000
+export const tripPhase = (start, end, now = new Date()) =>
+  end < todayKst(now) ? 'PAST' : start > todayKst(now) ? 'UPCOMING' : 'ONGOING'
+
+/**
+ * @param {string} value
+ * @param {Intl.DateTimeFormatOptions} [options]
+ */
+export function formatCalendarDate (value, options = { month: 'long', day: 'numeric', weekday: 'short' }) {
+  return new Intl.DateTimeFormat('ko-KR', { ...options, timeZone: 'UTC' }).format(calendarValue(value))
+}
+
 export function toDate (v) {
   if (v instanceof Date) return new Date(v.getTime())
   if (typeof v === 'string') {

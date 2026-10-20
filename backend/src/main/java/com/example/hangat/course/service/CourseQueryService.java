@@ -4,6 +4,9 @@ import com.example.hangat.common.exception.BaseException;
 import com.example.hangat.common.model.BaseResponseStatus;
 import com.example.hangat.common.model.PageResponse;
 import com.example.hangat.course.model.CourseDetailResponse;
+import com.example.hangat.course.CourseBudgetService;
+import com.example.hangat.course.CourseBudgetCalculation;
+import com.example.hangat.course.CourseResponseAssembler;
 import com.example.hangat.course.model.AccommodationDto;
 import com.example.hangat.course.model.CourseDuration;
 import com.example.hangat.course.model.CourseSummaryResponse;
@@ -47,13 +50,23 @@ public class CourseQueryService {
     private final CourseRepository courseRepository;
     private final CourseItemRepository itemRepository;
     private final CongestionService congestionService;
+    private final com.example.hangat.course.DbCourseWeatherFactsProvider weatherProvider;
+    private final com.example.hangat.course.CourseRetentionPolicy retentionPolicy;
+    private final CourseBudgetService budgets;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public CourseQueryService(CourseRepository courseRepository,
                               CourseItemRepository itemRepository,
-                              CongestionService congestionService) {
+                              CongestionService congestionService,
+                              com.example.hangat.course.DbCourseWeatherFactsProvider weatherProvider,
+                              com.example.hangat.course.CourseRetentionPolicy retentionPolicy,
+                              CourseBudgetService budgets) {
         this.courseRepository = courseRepository;
         this.itemRepository = itemRepository;
         this.congestionService = congestionService;
+        this.weatherProvider = weatherProvider;
+        this.retentionPolicy = retentionPolicy;
+        this.budgets = budgets;
     }
 
     /**
@@ -91,7 +104,15 @@ public class CourseQueryService {
         List<CourseItem> items = itemRepository.findItemsWithPlace(courseId);
 
         Map<LocalDate, Map<Long, Double>> ratesByDate = new HashMap<>();
-        List<CourseDetailResponse.DayDto> days = groupByDay(items, ratesByDate);
+        var weather = com.example.hangat.course.weather.CourseWeatherFacts.empty();
+        try {
+            weather = weatherProvider.loadDates(course.getStartDate(), course.getEndDate(), items.stream()
+                    .map(i -> i.getPlace().getRegion().getCode()).collect(Collectors.toSet()));
+        } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException unavailable) {
+            // Optional current forecast: preserve the authoritative itinerary on storage failure.
+        }
+        CourseBudgetCalculation budget = budgets.calculate(course, items);
+        List<CourseDetailResponse.DayDto> days = groupByDay(items, ratesByDate, weather, budget);
 
         // 헤더 배지는 아래 일정들과 같은 기준(지금 예보)이어야 한다 - 저장된 캐시를 그대로 쓰면
         // "헤더는 혼잡인데 모든 일정은 여유"인 화면이 나온다
@@ -109,10 +130,9 @@ public class CourseQueryService {
                 duration.days(),
                 duration.text(),
                 course.getPeople(),
-                course.getBudgetTotal(),
                 course.getTransport(),
-                course.getEstimatedCostMin(),
-                course.getEstimatedCostMax(),
+                budget.totalExpectedMin(),
+                budget.totalExpectedMax(),
                 current,
                 current == null ? null : CongestionLevel.from(current),
                 current == null ? null : CongestionLevel.from(current).label(),
@@ -120,7 +140,7 @@ public class CourseQueryService {
                 isSwappable(course, mine),
                 mine && course.getStatus() == CourseStatus.SAVED,
                 AccommodationDto.from(course.getAccommodationSourceMapping()),
-                days);
+                days, CourseResponseAssembler.toBudgetSummary(budget));
     }
 
     /** 예보가 있는 일정만 평균 낸다 - 없는 값을 0으로 만들지 않는다(하나도 없으면 null). */
@@ -148,6 +168,7 @@ public class CourseQueryService {
         if (course.getStatus() == CourseStatus.DELETED) {
             throw new BaseException(BaseResponseStatus.COURSE_NOT_FOUND, courseId);
         }
+        retentionPolicy.requireAvailable(course);
         if (course.getUser() != null
                 && (authUserId == null || !course.getUser().getId().equals(authUserId))) {
             throw new BaseException(BaseResponseStatus.COURSE_FORBIDDEN, courseId);
@@ -175,7 +196,8 @@ public class CourseQueryService {
 
     /** 일차별로 묶는다 - 화면이 "1일차/2일차" 섹션으로 그린다. items는 이미 (일차, 순서) 정렬. */
     private List<CourseDetailResponse.DayDto> groupByDay(
-            List<CourseItem> items, Map<LocalDate, Map<Long, Double>> ratesByDate) {
+            List<CourseItem> items, Map<LocalDate, Map<Long, Double>> ratesByDate,
+            com.example.hangat.course.weather.CourseWeatherFacts weather, CourseBudgetCalculation budget) {
         List<CourseDetailResponse.DayDto> days = new ArrayList<>();
         int currentDay = -1;
         List<CourseDetailResponse.ItemDto> bucket = null;
@@ -190,7 +212,7 @@ public class CourseQueryService {
                 bucketDate = item.getVisitDate();
                 bucket = new ArrayList<>();
             }
-            bucket.add(toItem(item, ratesByDate));
+            bucket.add(toItem(item, ratesByDate, weather, budget));
         }
         if (bucket != null) {
             days.add(new CourseDetailResponse.DayDto(currentDay, bucketDate, bucket));
@@ -199,7 +221,8 @@ public class CourseQueryService {
     }
 
     private CourseDetailResponse.ItemDto toItem(CourseItem item,
-                                                Map<LocalDate, Map<Long, Double>> ratesByDate) {
+                                                Map<LocalDate, Map<Long, Double>> ratesByDate,
+                                                com.example.hangat.course.weather.CourseWeatherFacts weather, CourseBudgetCalculation budget) {
         Place place = item.getPlace();
         Double rate = ratesByDate
                 .computeIfAbsent(item.getVisitDate(), congestionService::ratesFor)
@@ -215,6 +238,7 @@ public class CourseQueryService {
                 place.getName(),
                 place.getPrimaryCategory().getName(),
                 place.getRegion().getName(),
+                place.getBusinessStatus(),
                 place.getImageUrl(),
                 place.getLatitude() == null ? null : place.getLatitude().doubleValue(),
                 place.getLongitude() == null ? null : place.getLongitude().doubleValue(),
@@ -236,6 +260,12 @@ public class CourseQueryService {
                 item.getRecommendationReasonCode(),
                 item.getRecommendationReason(),
                 item.getReplacedFromPlace() == null ? null : item.getReplacedFromPlace().getId(),
-                item.getReplacedFromPlace() == null ? null : item.getReplacedFromPlace().getName());
+                item.getReplacedFromPlace() == null ? null : item.getReplacedFromPlace().getName(),
+                weather.weatherFactSets().stream().flatMap(s -> s.facts().stream())
+                        .filter(f -> item.getVisitDate().equals(f.forecastDate()) && f.dailyEvidence() != null
+                                && place.getRegion().getCode().equals(f.dailyEvidence().regionCode()))
+                        .map(com.example.hangat.course.model.CourseResponseDto.WeatherFactDto::from).toList(),
+                budget.itemCostsByItemId().getOrDefault(item.getId(), List.of()).stream()
+                        .map(CourseResponseAssembler::toCostDto).toList());
     }
 }

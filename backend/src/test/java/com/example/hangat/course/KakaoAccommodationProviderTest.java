@@ -80,6 +80,30 @@ class KakaoAccommodationProviderTest {
                 .isInstanceOf(BaseException.class);
     }
 
+    @Test
+    void 생성전_선택숙소는_선택좌표의_AD5_identity로_검증한다() {
+        when(kakao.searchLodgings(
+                new BigDecimal("126.4869"), new BigDecimal("33.4907"),
+                KakaoAccommodationProvider.SELECTED_IDENTITY_RADIUS_METERS))
+                .thenReturn(List.of(place("selected-hotel", "AD5")));
+
+        var verified = provider.verifySelected(
+                "KAKAO_LOCAL", "selected-hotel", 33.4907, 126.4869);
+
+        assertThat(verified.place().id()).isEqualTo("selected-hotel");
+        assertThat(verified.region()).isEqualTo(east);
+    }
+
+    @Test
+    void 생성전_선택숙소도_좌표주변_identity가_다르면_거부한다() {
+        when(kakao.searchLodgings(any(), any(), anyInt()))
+                .thenReturn(List.of(place("different-hotel", "AD5")));
+
+        assertThatThrownBy(() -> provider.verifySelected(
+                "KAKAO_LOCAL", "selected-hotel", 33.4907, 126.4869))
+                .isInstanceOf(BaseException.class);
+    }
+
     private KakaoLocalClient.KakaoPlace place(String id, String category) {
         return new KakaoLocalClient.KakaoPlace(
                 id, "Kakao 원본 호텔", "Kakao 지번", "Kakao 도로명",

@@ -54,7 +54,7 @@ describe('AI 코스 → 지도 코스 변환', () => {
   it('경비는 아이템 비용 합, 이동은 분 합이다', () => {
     const course = toMapCourse(real)
 
-    expect(course.bud).toBe(400000)
+    expect(course).not.toHaveProperty('bud')
     expect(course.spent).toBe(course.stops.reduce((a, b) => a + b.cost, 0))
     expect(course.move).toBe(course.stops.reduce((a, b) => a + b.mv, 0))
   })

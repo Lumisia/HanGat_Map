@@ -1,4 +1,10 @@
 # 운영(OCI) 프로필 - 모든 비밀값은 서버 환경변수로 주입한다 (파일에 직접 기입 금지)
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
 spring:
   application:
     name: hangat-api
@@ -92,7 +98,12 @@ management:
   endpoints:
     web:
       exposure:
-        include: health
+        include: health,info
+  info:
+    defaults:
+      enabled: false
+    env:
+      enabled: false
 
 # 날씨 조회용 API
 weather:
@@ -103,6 +114,12 @@ weather:
     enabled: true
     # 배포 직후 첫 스케줄까지 기다리지 않고 채우려면 true - 발표분 단위 멱등이라 재기동해도 중복 없음
     on-startup: ${WEATHER_INGEST_ON_STARTUP:false}
+
+congestion:
+  ingest:
+    enabled: true
+    # 배포 직후 첫 스케줄까지 기다리지 않고 채우려면 true - 같은 날 재실행은 그날 발표분만 교체해 중복 없음
+    on-startup: ${CONGESTION_INGEST_ON_STARTUP:false}
 
 tour-api:
   base-url: ${TOUR_API_BASE_URL}
@@ -154,3 +171,20 @@ kakao-mobility:
   retry-backoff: 200ms
   cache-ttl: 10m
   cache-max-size: 128
+
+# 알람 + AI 코스 생성 비동기 처리
+hangat:
+  async:
+    enabled: ${HANGAT_ASYNC_ENABLED:true}
+    parallelism: ${HANGAT_ASYNC_PARALLELISM:2}
+    max-pending: ${HANGAT_ASYNC_MAX_PENDING:50}
+    max-active-per-user: ${HANGAT_ASYNC_MAX_ACTIVE_PER_USER:2}
+
+  notifications:
+    enabled: ${HANGAT_NOTIFICATIONS_ENABLED:false}
+
+  trip-alerts:
+    enabled: ${HANGAT_TRIP_ALERTS_ENABLED:false}
+
+  trip-notifications:
+    enabled: ${HANGAT_TRIP_NOTIFICATIONS_ENABLED:false}

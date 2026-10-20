@@ -9,7 +9,7 @@ import router from './router/index.js'
     tokens → 색·간격·모양 (메인·AI코스 팔레트가 원천, 회원·마이페이지 토큰은 별칭)
     base   → 리셋 + 공통 컴포넌트 + 헤더(.nav 계열). **헤더의 정본**
 
-  콘텐츠 화면 규칙(styles.css)과 지도 규칙(hangat.css)은 각각
+  콘텐츠 화면 규칙(styles.css)과 지도 규칙(styles/hangat.css)은 각각
   DefaultLayout과 MapLayout에서 자기 범위 안에만 불러온다.
 
   ⚠️ assets/home.css 는 **일부러 불러오지 않는다.**

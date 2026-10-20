@@ -83,8 +83,6 @@ public class CoursePreset {
     @Column(name = "default_people", nullable = false)
     private Short defaultPeople = 2;
 
-    @Column(name = "default_budget_total")
-    private Integer defaultBudgetTotal;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "default_transport", length = 20)

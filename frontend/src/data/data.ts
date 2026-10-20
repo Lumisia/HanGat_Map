@@ -303,7 +303,7 @@ export const places: Place[] = [
 ]
 
 export const levelLabel = {
-  QUIET: '여유',
+  QUIET: '한산',
   NORMAL: '보통',
   CROWDED: '혼잡',
 } as const

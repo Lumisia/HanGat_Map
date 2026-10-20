@@ -14,16 +14,15 @@
  * iOS 홈 인디케이터를 피하려고 `env(safe-area-inset-bottom)` 만큼 아래를 띄운다.
  * (index.html 의 viewport 에 `viewport-fit=cover` 가 있어야 이 값이 0 이 아니다.)
  */
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { useAuthStore } from '../../stores/auth.js'
+import { useNotificationStore } from '../../stores/notifications.js'
 import { useUiStore } from '../../stores/ui.js'
-import { listAlerts } from '../../api/mypage.js'
 import AppIcon from '../common/AppIcon.vue'
-import { NAV_TABS, isTabActive } from '../../config/navTabs.js'
+import { NAV_TABS, isTabActive, tabDestination } from '../../config/navTabs.js'
 
 const route = useRoute()
-const auth = useAuthStore()
+const notifications = useNotificationStore()
 const ui = useUiStore()
 
 /*
@@ -32,21 +31,7 @@ const ui = useUiStore()
 */
 const TABS = NAV_TABS
 
-const unread = ref(0)
-
-async function loadUnread () {
-  if (!auth.isLoggedIn) {
-    unread.value = 0
-    return
-  }
-  try {
-    unread.value = (await listAlerts({ onlyUnread: true })).unread
-  } catch {
-    unread.value = 0
-  }
-}
-
-watch(() => [auth.user?.userId, route.fullPath, ui.alertsVersion], loadUnread, { immediate: true })
+const unread = computed(() => notifications.unread)
 
 /** `/mypage/reviews` 같은 하위 경로에서도 마이페이지 탭이 켜져야 한다 (판정은 navTabs.js) */
 const isOn = computed(() => tab => isTabActive(tab, route.path))
@@ -56,8 +41,9 @@ const isOn = computed(() => tab => isTabActive(tab, route.path))
   <nav class="mtabbar" aria-label="주요 메뉴">
     <RouterLink
       v-for="t in TABS"
+      @click="ui.enterAiCourse(t.to, $event)"
       :key="t.to"
-      :to="t.to"
+      :to="tabDestination(t)"
       class="mt"
       :class="{ on: isOn(t) }"
       :aria-current="isOn(t) ? 'page' : undefined"

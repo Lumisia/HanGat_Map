@@ -1,0 +1,77 @@
+<!doctype html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="app"></div><script type="module">
+import { createApp, h } from 'vue';
+import { createPinia } from 'pinia';
+import { createRouter, createMemoryHistory } from 'vue-router';
+// Local browser regression fixture only. Vite's production entry remains index.html.
+import Saved from '/src/views/course/SavedCoursesView.vue';
+import Header from '/src/components/layout/AppHeader.vue';
+import CourseService from '/src/services/CourseService';
+import PlaceDetailService from '/src/services/PlaceDetailService';
+import { useAuthStore } from '/src/stores/auth';
+import { acceptLoginResponse } from '/src/api/backendClient';
+import '/src/assets/styles/fonts.css';
+import '/src/assets/styles/tokens.css';
+import '/src/assets/styles/base.css';
+import '/src/assets/styles.css';
+const names=['금오름','새미은총의동산','성이시돌목장'];
+const titles=['서부 힐링 코스','북부 오름 투어','제주시 미식 산책','동부 해안 여행','남부 숲길 코스'];
+if(new URLSearchParams(location.search).get('variant')==='renamed'){
+ names.splice(0,names.length,'이름이 변경된 관광지','또 다른 관광지','동일 이름과 무관한 장소');
+ titles.splice(0,titles.length,...titles.map((_,i)=>`새 이름 코스 ${i+1}`));
+}
+window.qaDeleted=[];
+window.qaRenamed=[];window.qaSwaps=[];
+CourseService.renameCourse=async(id,title)=>{window.qaRenamed.push({id,title});titles[Number(id)-1]=title;return title};
+CourseService.getAlternatives=async()=>[{place_id:99,place_name:'협재해수욕장',category_name:'관광지',distance_m:3500,congestion_level:'QUIET',radius_km:10,recommendation_reason:'한산한 대안이에요'}];
+window.qaAlternativeCalls=[];
+CourseService.getStraightAlternatives=async(placeId,exclude)=>{
+ window.qaAlternativeCalls.push({placeId,exclude});
+ return {forecast_date:'2026-09-18',distance_basis:'STRAIGHT_LINE',places:Array.from({length:7},(_,i)=>({
+  place_id:99+i,place_name:i?`대안 관광지 ${i+1}`:'협재해수욕장',category_name:'관광지',distance_m:3500+i*2000,
+  congestion_level:'QUIET',radius_km:i>3?20:10,overview:'해안 풍경을 감상하며 산책할 수 있는 장소입니다. 이 소개는 화면 검증을 위한 샘플입니다.',
+  image_url:i%2?null:'/images/places/gwangchigi.jpg',recommendation_reason:'',replacement_reason:''
+ }))};
+};
+CourseService.swapItem=async(id,itemId,placeId)=>{window.qaSwaps.push({id,itemId,placeId});return {}};
+CourseService.deleteCourse=async(id)=>{window.qaDeleted.push(id)};
+CourseService.getSavedCourses=async(page,size)=>{window.qaPageSize=size;return {ok:true,totalPages:2,totalElements:8,cards:titles.slice(0,page?3:size).map((title,i)=>({id:String(i+1+page*5),title,stops:'금오름 → 성이시돌목장',conditionLabel:'서부 2박 3일 · 2인'}))}};
+PlaceDetailService.getDetail=async(id)=>({id,goodPrice:id===2,useFeeText:id===2?'대표 메뉴 8,000원':null});
+CourseService.getCourseDetail=async(id)=>({id,title:titles[(Number(id)-1)%5],transport:'RENTAL_CAR',conditionLabel:'서부 2박 3일 · 2인',budgetLabel:'요금 확인 필요',level:'QUIET',swappable:true,manageable:true,days:[1,2,3].map(dayNo=>({dayNo,visitDate:`2026-09-${16+dayNo}`,items:names.map((placeName,i)=>({id:dayNo*10+i,placeId:i+1,placeName,position:i+1,startTime:`${10+i*2}:00`,endTime:`${11+i*2}:20`,latitude:33.35+i*.02,longitude:126.3+i*.01,congestionLevel:i===2?null:'QUIET',congestionRate:i===2?null:24,reason:'제주의 숲과 들판에서 여유롭게 산책할 수 있는 장소예요.',inboundTravelMinutes:i?12:null,inboundDistanceM:i?7400:null,imageUrl:null}))}))});
+const fetchCourse=CourseService.getCourseDetail;
+CourseService.getCourseDetail=async(id)=>{
+ const value=await fetchCourse(id);value.status='SAVED';
+ if(new URLSearchParams(location.search).has('budget')) {
+  value.budgetTotal=Number(id)*100000;
+  value.budgetSummary={has_cost_data:true,budget_total:value.budgetTotal,verified_total:0,
+   estimated_min:16000,estimated_max:24000,total_expected_min:16000,total_expected_max:24000,
+   remaining_budget:value.budgetTotal-24000,usage_rate:24/Number(id),over_budget:false,unknown_count:2};
+  value.budgetLabel='예상 16,000~24,000원';
+ }
+ for(const swap of window.qaSwaps.filter(s=>s.id===id))for(const day of value.days)for(const item of day.items)if(item.id===swap.itemId){item.placeName='협재해수욕장';item.placeId=99}
+ return value;
+};
+const originalFetch=window.fetch.bind(window);let trip={courseId:null,version:0};
+if(new URLSearchParams(location.search).has('budget')) {
+ const savedList=CourseService.getSavedCourses;
+ CourseService.getSavedCourses=async(...args)=>{const list=await savedList(...args);list.cards.forEach(c=>c.budgetTotal=Number(c.id)*100000);return list};
+}
+window.fetch=async(input,init)=>{
+ const url=new URL(typeof input==='string'?input:input.url,location.origin);
+ if(url.pathname.endsWith('/users/me/trip-confirmation')){
+  if(init?.method==='PUT')trip={courseId:JSON.parse(init.body).courseId,courseTitle:'서부 힐링 코스',version:trip.version+1};
+  if(init?.method==='DELETE')trip={courseId:null,version:trip.version+1};
+  return Response.json({success:true,code:2000,result:trip});
+ }
+ return originalFetch(input,init);
+};
+window.qaMap={relayouts:0};
+const maps={load:fn=>fn(),LatLng:class{constructor(lat,lng){this.lat=lat;this.lng=lng}},LatLngBounds:class{extend(){}},Map:class{constructor(el){this.el=el;el.style.background='#cfe8df'}setCenter(){}panTo(){}setBounds(){}setLevel(){}relayout(){window.qaMap.relayouts++}},CustomOverlay:class{constructor(o){this.content=o.content;this.map=o.map;o.content.style.position='relative';o.content.style.margin='20px';o.map.el.append(o.content)}setMap(m){if(!m)this.content.remove()}},Polyline:class{setMap(){}}};
+window.kakao={maps};
+window.Kakao={Share:{},isInitialized:()=>true,Navi:{start:x=>window.qaNavi=x}};
+const router=createRouter({history:createMemoryHistory(),routes:[{path:'/courses',component:Saved},{path:'/courses/:courseId',component:Saved},{path:'/mypage/profile',name:'my-profile',component:{render:()=>null}},{path:'/:pathMatch(.*)*',component:Saved}]});
+await router.push('/courses');
+const pinia=createPinia();const auth=useAuthStore(pinia);auth.user={userId:7,nickname:'화귤곰'};auth.ready=true;
+acceptLoginResponse({tokens:{accessToken:`qa.${btoa(JSON.stringify({sub:'7'}))}.fixture`,expiresIn:3600000},user:{userId:7}});
+window.qaGo=path=>router.push(path);
+createApp({render:()=>h('div',[h(Header),h('div',{class:'content-scope'},[h(Saved)])])}).use(pinia).use(router).mount('#app');
+</script></body></html>

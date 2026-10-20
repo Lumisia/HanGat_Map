@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeKakaoPlaceResults } from './kakaoPlaceSearchService'
+import { isSearchableKakaoQuery, normalizeKakaoPlaceResults } from './kakaoPlaceSearchService'
 import { findPreferenceConflict } from './placePreferenceService'
 import type { PlacePreference } from '../assets/types/course'
 
 describe('kakaoPlaceSearchService', () => {
+  it('공백을 제외한 완성 검색어가 두 글자일 때 검색을 시작한다', () => {
+    expect(isSearchableKakaoQuery('제주')).toBe(true)
+    expect(isSearchableKakaoQuery('제 주')).toBe(true)
+    expect(isSearchableKakaoQuery('제')).toBe(false)
+    expect(isSearchableKakaoQuery('  제  ')).toBe(false)
+  })
   it('keeps only Jeju results in general mode without restricting categories', () => {
     const results = normalizeKakaoPlaceResults([
       { id: '1', place_name: '용머리해안', address_name: '제주특별자치도 서귀포시 안덕면', x: '126.31', y: '33.23', category_name: '관광지' },

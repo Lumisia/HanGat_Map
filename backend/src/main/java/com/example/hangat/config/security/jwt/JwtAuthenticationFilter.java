@@ -22,6 +22,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtProvider jwtProvider;
     private final JwtAuthenticationEntryPoint entryPoint;
+    private final com.example.hangat.user.repository.UserRepository users;
 
     /**
      *  인증 API는 Access token과 무관하게 접근한다.
@@ -47,6 +48,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         try {
             Long userId = jwtProvider.parseUserId(token);
+            var user = users.findById(userId).orElseThrow(() -> new BaseException(
+                    com.example.hangat.common.model.BaseResponseStatus.JWT_INVALID));
+            if (!user.canLogin() || user.getAuthVersion() != jwtProvider.parseAuthVersion(token)) {
+                throw new BaseException(com.example.hangat.common.model.BaseResponseStatus.JWT_INVALID);
+            }
 
             UsernamePasswordAuthenticationToken authentication =
                     new UsernamePasswordAuthenticationToken(

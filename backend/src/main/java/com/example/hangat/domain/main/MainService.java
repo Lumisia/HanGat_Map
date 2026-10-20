@@ -64,11 +64,11 @@ public class MainService {
         return CalmPlaceResponse.of(place, rate, level, reasonFor(place, level));
     }
 
-    /** 추천 근거 칩 - 우선순위: 검증가 > 숨은 명소 > 예보 여유 (프론트 문구와 동일 규칙) */
+    /** 추천 근거 칩 - 우선순위: 검증가 > 숨은 명소 > 예보 한산 (프론트 문구와 동일 규칙) */
     private String reasonFor(Place place, CongestionLevel level) {
         if (place.isGoodPrice()) return "착한가격업소 검증가";
         if (place.isHiddenGem()) return "덜 알려진 숨은 명소";
-        if (level == CongestionLevel.QUIET) return "이 날짜 혼잡 예보가 여유예요";
+        if (level == CongestionLevel.QUIET) return "이 날짜 혼잡 예보가 한산이에요";
         return "인기 명소보다 한산한 편이에요";
     }
 }

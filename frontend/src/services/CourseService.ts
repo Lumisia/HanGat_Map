@@ -12,7 +12,13 @@ import { apiRequest, getBackendUserId } from '../api/backendClient'
 import { homeCourses } from '../data/courses'
 import type { CongestionLevel } from '../assets/types'
 import type { AlternativePlace } from '../assets/types/course'
-import type { AccommodationInput } from '../assets/types/course'
+import type { AccommodationInput, CourseBudgetSummary } from '../assets/types/course'
+
+export interface StraightAlternatives {
+  forecast_date: string
+  distance_basis: 'STRAIGHT_LINE'
+  places: AlternativePlace[]
+}
 
 /** 화면이 그리는 코스 카드 한 장 - 메인 추천과 저장 목록이 같은 모양을 쓴다(백엔드 계약도 동일). */
 export interface CourseCard {
@@ -78,6 +84,7 @@ interface BackendPage<T> {
 
 /** 백엔드 CourseDetailResponse 의 일정 한 칸 */
 export interface CourseDetailItem {
+  endTime?: string | null
   id: number
   placeId: number
   placeName: string
@@ -99,6 +106,8 @@ export interface CourseDetailItem {
   replacedFromPlaceName: string | null
   inboundDistanceM: number | null
   inboundTravelMinutes: number | null
+  /** 실내 여부 - 백엔드 이름 키워드 휴리스틱. 비 예보일 실내 배지용 */
+  indoor?: boolean
 }
 
 export interface CourseDetailDay {
@@ -108,7 +117,10 @@ export interface CourseDetailDay {
 }
 
 export interface CourseDetail {
+  budgetSummary?: CourseBudgetSummary
+  transport?: string | null
   id: string
+  status?: string
   title: string | null
   conditionLabel: string
   durationText: string
@@ -129,7 +141,10 @@ export interface CourseDetail {
 }
 
 interface BackendCourseDetail {
+  budget_summary?: CourseBudgetSummary
+  transport?: string | null
   id: number
+  status?: string
   title: string | null
   start_date: string
   end_date: string
@@ -158,6 +173,7 @@ interface BackendCourseDetail {
       longitude: number | null
       position: number
       start_time: string | null
+      end_time?: string | null
       congestion_rate: number | null
       congestion_level: CongestionLevel | null
       congestion_label: string | null
@@ -166,6 +182,7 @@ interface BackendCourseDetail {
       replaced_from_place_name: string | null
       inbound_distance_m: number | null
       inbound_travel_minutes: number | null
+      indoor?: boolean
     }>
   }>
 }
@@ -208,8 +225,8 @@ const toCard = (row: BackendCourseCard): CourseCard => ({
   conditionLabel: conditionLabelOf(row.region_name, row.duration_text, row.people),
   stops: row.highlight_names.join(' → '),
   highlight: row.region_name
-    ? `${row.region_name} 권역에서 그날 예보가 여유로운 곳들로 이었어요`
-    : '그날 예보가 여유로운 곳들로 이었어요',
+    ? `${row.region_name} 권역에서 그날 예보가 한산한 곳들로 이었어요`
+    : '그날 예보가 한산한 곳들로 이었어요',
   budgetLabel: budgetLabelOf(row.estimated_cost_min, row.estimated_cost_max),
   level: row.congestion_level,
   imageUrl: row.image_url,
@@ -278,10 +295,17 @@ export const CourseService = {
    * 같은 카테고리·그 날짜 예보 혼잡 미만·10km 우선(부족하면 20km)·코스 내 중복 제외는 서버가 한다.
    * apiGet은 4xx 본문을 읽지 않아 코드를 잃으므로 apiRequest를 쓴다 - 그 날짜 예보가 없으면 ApiError(3401)가 온다.
    */
-  async getAlternatives (placeId: number, visitDate: string, excludeIds: number[]): Promise<AlternativePlace[]> {
-    const query = new URLSearchParams({ date: visitDate, limit: '3' })
+  async getAlternatives (placeId: number, visitDate: string, excludeIds: number[], options?: { limit?: number; sort?: 'DISTANCE' }): Promise<AlternativePlace[]> {
+    const query = new URLSearchParams({ date: visitDate, limit: String(options?.limit ?? 3) })
+    if (options?.sort) query.set('sort', options.sort)
     if (excludeIds.length) query.set('exclude', excludeIds.join(','))
     return await apiRequest(`/places/${placeId}/alternatives?${query.toString()}`) as AlternativePlace[]
+  },
+
+  async getStraightAlternatives(placeId: number, excludeIds: number[]): Promise<StraightAlternatives> {
+    const query = new URLSearchParams()
+    if (excludeIds.length) query.set('exclude', excludeIds.join(','))
+    return await apiRequest(`/places/${placeId}/straight-alternatives?${query}`, { timeoutMs: 15000 }) as StraightAlternatives
   },
 
   /**
@@ -297,9 +321,23 @@ export const CourseService = {
     return { averageRate: body.average_congestion_rate, levelLabel: body.congestion_label, message: body.message }
   },
 
+  /** 저장 코스 이름 변경 - PATCH /courses/{id}. 본인 코스만(3307) 되고 100자 제한은 서버가 검사한다 */
+  async renameCourse (courseId: string, title: string): Promise<string> {
+    const row = await apiRequest(`/courses/${courseId}`, {
+      method: 'PATCH',
+      body: { title },
+      auth: true,
+    }) as { title: string | null }
+    return row.title ?? title
+  },
+
+  /** 저장 코스 삭제 - DELETE /courses/{id}. 서버는 논리 삭제라 되돌릴 여지를 남기고, 두 번 지워도 성공이다 */
+  async deleteCourse (courseId: string): Promise<void> {
+    await apiRequest(`/courses/${courseId}`, { method: 'DELETE', auth: true })
+  },
+
   /**
-   * 코스 상세. 숫자 id만 백엔드에 묻는다 - 목업 코스는 'sample-aewol' 같은 문자열 id라
-   * 전환기 동안 두 경로가 공존한다.
+   * 코스 상세. 숫자 id만 백엔드에 묻는다.
    *
    * 로그인돼 있으면 JWT를 붙인다 - 소유자가 있는 저장 코스는 본인 확인(3307)을 통과해야 열리고,
    * 그래야 swappable/manageable이 참이 되어 교체·이름 변경이 가능하다. 비로그인은 공개 경로.
@@ -310,6 +348,7 @@ export const CourseService = {
       const row = await apiRequest(`/courses/${id}`, { auth: getBackendUserId() != null }) as BackendCourseDetail
       return {
         id: String(row.id),
+        transport: row.transport,
         title: row.title,
         conditionLabel: conditionLabelOf(
           row.days[0]?.items[0]?.region_name ?? null, row.duration_text, row.people),
@@ -320,9 +359,11 @@ export const CourseService = {
         levelLabel: row.congestion_label,
         averageRate: row.average_congestion_rate,
         plannedAverageRate: row.planned_average_congestion_rate,
+        budgetSummary: row.budget_summary,
         budgetLabel: budgetLabelOf(row.estimated_cost_min, row.estimated_cost_max),
         swappable: row.swappable,
         manageable: row.manageable,
+        status: row.status,
         accommodation: row.accommodation,
         days: row.days.map(day => ({
           dayNo: day.day_no,
@@ -338,6 +379,7 @@ export const CourseService = {
             longitude: item.longitude,
             position: item.position,
             startTime: item.start_time,
+            endTime: item.end_time,
             congestionRate: item.congestion_rate,
             congestionLevel: item.congestion_level,
             congestionLabel: item.congestion_label,
@@ -346,6 +388,7 @@ export const CourseService = {
             replacedFromPlaceName: item.replaced_from_place_name,
             inboundDistanceM: item.inbound_distance_m,
             inboundTravelMinutes: item.inbound_travel_minutes,
+            indoor: item.indoor,
           })),
         })),
       }

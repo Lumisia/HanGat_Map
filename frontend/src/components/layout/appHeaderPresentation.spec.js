@@ -1,14 +1,21 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { createSSRApp } from 'vue'
+import { renderToString } from '@vue/server-renderer'
+import { createPinia } from 'pinia'
+import { createMemoryHistory, createRouter } from 'vue-router'
+import AppHeader from './AppHeader.vue'
 
 const headerSource = readFileSync(new URL('./AppHeader.vue', import.meta.url), 'utf8')
 
 describe('app header mobile presentation', () => {
-  it('keeps the phone-shaped desktop preview action from the shared header', () => {
-    expect(headerSource).toContain('openMobilePreview')
-    expect(headerSource).toContain('class="mobile-preview-button"')
-    expect(headerSource).toContain('aria-label="모바일 화면으로 미리보기"')
-    expect(headerSource).toContain('width=390,height=844')
+  it('renders navigation without the mobile preview popup action', async () => {
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: {} }] })
+    await router.push('/')
+    const html = await renderToString(createSSRApp(AppHeader).use(createPinia()).use(router))
+    expect(html).not.toContain('aria-label="모바일 화면으로 미리보기"')
+    expect(html).toContain('aria-controls="mobile-header-menu"')
+    expect(html).toContain('로그인')
   })
 
   it('keeps an accessible mobile menu trigger and navigation panel in the top header', () => {

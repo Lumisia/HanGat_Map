@@ -60,9 +60,10 @@ public class CourseAiPreparationService {
                         request,
                         safeCandidates,
                         weatherFacts,
-                        buildAdjacentTravelFacts(request, safeCandidates));
+                        buildBoundedTravelFacts(request, safeCandidates));
         CourseGenerationMetadata metadata = new CourseGenerationMetadata(
-                GenerationReason.INITIAL, null, null);
+                request.isRegenerate() ? GenerationReason.USER_REGENERATE : GenerationReason.INITIAL,
+                null, null);
 
         CourseAiInputDto input = assembler.assemble(
                 request,
@@ -74,23 +75,26 @@ public class CourseAiPreparationService {
         return new PreparedGeneration(generationFacts.facts(), input, metadata);
     }
 
-    private List<CourseTravelLegDto> buildAdjacentTravelFacts(
+    private List<CourseTravelLegDto> buildBoundedTravelFacts(
             CourseRequestDto request,
             List<CourseCandidateDto> candidates
     ) {
         List<CourseTravelLegDto> travelFacts = new ArrayList<>();
 
-        for (int index = 0; index + 1 < candidates.size(); index++) {
-            CourseCandidateDto from = candidates.get(index);
-            CourseCandidateDto to = candidates.get(index + 1);
+        // The shortlist is capped at 30. Computing local estimates for every directed pair
+        // lets the generator validate any chosen order without making an external route call.
+        for (int fromIndex = 0; fromIndex < candidates.size(); fromIndex++) {
+            for (int toIndex = 0; toIndex < candidates.size(); toIndex++) {
+                if (fromIndex == toIndex) continue;
+                CourseCandidateDto from = candidates.get(fromIndex);
+                CourseCandidateDto to = candidates.get(toIndex);
 
-            if (from == null || from.getPlace() == null || to == null || to.getPlace() == null) {
-                continue;
+                if (from == null || from.getPlace() == null || to == null || to.getPlace() == null) continue;
+
+                travelService.calculateStraightLineLeg(
+                        from.getPlace(), to.getPlace(), request.getTransport()
+                ).ifPresent(travelFacts::add);
             }
-
-            travelService.calculateStraightLineLeg(
-                    from.getPlace(), to.getPlace(), request.getTransport()
-            ).ifPresent(travelFacts::add);
         }
 
         return List.copyOf(travelFacts);

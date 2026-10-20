@@ -36,6 +36,11 @@ public class AuthRequestLimiter {
         check("login:ip", clientIp, LOGIN_PER_IP, LOGIN_WINDOW);
     }
 
+    /** 공용 계정의 이메일 제한으로 다른 심사위원까지 차단하지 않도록 IP별로 제한한다. */
+    public void checkDemoLogin(String clientIp) {
+        check("demo-login:ip", clientIp, 10, LOGIN_WINDOW);
+    }
+
     public void checkEmailRequest(String action, String clientIp, String email) {
         String normalizedEmail = EmailNormalizer.normalize(email);
         check(action + ":email", normalizedEmail, EMAIL_PER_ADDRESS, EMAIL_WINDOW);

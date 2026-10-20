@@ -21,6 +21,15 @@ public class AuthCookieManager {
 
     public static final String REFRESH_COOKIE = "hangat_rt";
     public static final String OAUTH_FLOW_COOKIE = "hangat_oauth_flow";
+    public static final String RECOVERY_COOKIE = "hangat_recovery";
+
+    public void setRecoveryCookie(HttpServletResponse response, String token) {
+        addCookie(response, RECOVERY_COOKIE, token, "/auth/withdrawal", Duration.ofMinutes(10));
+    }
+
+    public void clearRecoveryCookie(HttpServletResponse response) {
+        addCookie(response, RECOVERY_COOKIE, "", "/auth/withdrawal", Duration.ZERO);
+    }
 
     private final boolean secure;
 

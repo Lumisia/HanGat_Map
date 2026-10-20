@@ -33,6 +33,9 @@ pipeline {
                 checkout scm
 
                 script {
+                    env.DEPLOYMENT_REVISION = sh(
+                            script: 'git rev-parse HEAD', returnStdout: true
+                    ).trim()
                     String commitHash = sh(
                             script: 'git rev-parse --short=12 HEAD',
                             returnStdout: true
@@ -103,7 +106,6 @@ pipeline {
                     }
 
                     trap cleanup EXIT
-
                     docker rm -f "$TEST_CONTAINER" >/dev/null 2>&1 || true
 
                     docker create \
@@ -111,18 +113,14 @@ pipeline {
                       --user "$(id -u):$(id -g)" \
                       --env HOME=/tmp \
                       --env npm_config_cache=/tmp/npm-cache \
-                      --workdir /workspace \
+                      --workdir /workspace/frontend \
                       node:22-alpine \
-                      sh -c "
-                        npm ci &&
-                        npm run type-check &&
-                        npm test
-                      "
+                      sh -c "npm ci && npm run type-check && npm test"
 
-                    docker cp \
-                      "$WORKSPACE/frontend/." \
-                      "$TEST_CONTAINER:/workspace"
-
+                    # Preserve repository-relative paths used by deployment contract tests.
+                    docker cp "$WORKSPACE/frontend/." "$TEST_CONTAINER:/workspace/frontend"
+                    docker cp "$WORKSPACE/cicd" "$TEST_CONTAINER:/workspace/cicd"
+                    docker cp "$WORKSPACE/backend" "$TEST_CONTAINER:/workspace/backend"
                     docker start --attach "$TEST_CONTAINER"
                 '''
             }
@@ -140,6 +138,7 @@ pipeline {
                 ]) {
                     sh '''
                         set +x
+                        set -eu
 
                         test -f cicd/helm/Chart.yaml
                         test -f cicd/helm/values.yaml
@@ -148,13 +147,29 @@ pipeline {
                         helm lint cicd/helm \
                           --values cicd/helm/values.yaml \
                           --values cicd/helm/values-oci-k3s.yaml \
-                          --values "$HELM_VALUES_PRIVATE"
+                          --values "$HELM_VALUES_PRIVATE" \
+                          --set-string backend.configEnv.HANGAT_ASYNC_ENABLED=true \
+                          --set ingress.swagger.enabled=false
 
                         helm template "$HELM_RELEASE" cicd/helm \
                           --namespace "$K8S_NAMESPACE" \
                           --values cicd/helm/values.yaml \
                           --values cicd/helm/values-oci-k3s.yaml \
                           --values "$HELM_VALUES_PRIVATE" \
+                          --set ingress.swagger.enabled=false \
+                          --set-string backend.configEnv.HANGAT_ASYNC_ENABLED=true \
+                          > /dev/null
+
+                        # 비활성 기간에도 CronJob 템플릿의 문법 오류를 검사한다.
+                        helm template "$HELM_RELEASE" cicd/helm \
+                          --namespace "$K8S_NAMESPACE" \
+                          --values cicd/helm/values.yaml \
+                          --values cicd/helm/values-oci-k3s.yaml \
+                          --values "$HELM_VALUES_PRIVATE" \
+                          --set ingress.swagger.enabled=false \
+                          --set-string backend.configEnv.HANGAT_ASYNC_ENABLED=true \
+                          --set batch.enabled=true \
+                          --set batch.suspend=true \
                           > /dev/null
                     '''
                 }
@@ -192,7 +207,12 @@ pipeline {
 
                         docker build \
                           --build-arg VITE_API_BASE_URL="$FRONTEND_API_BASE_URL" \
+                          --build-arg VITE_NOTIFICATIONS_ENABLED=true \
+                          --build-arg VITE_ASYNC_COURSES_ENABLED=true \
+                          --build-arg VITE_TRIP_ALERTS_ENABLED=true \
+                          --build-arg VITE_TRIP_NOTIFICATIONS_ENABLED=true \
                           --secret id=kakao_map_key,env=KAKAO_MAP_KEY \
+                          --no-cache \
                           --file cicd/frontend.Dockerfile \
                           --tag "$FRONTEND_IMAGE:$IMAGE_TAG" \
                           .
@@ -254,39 +274,7 @@ pipeline {
                         variable: 'HELM_VALUES_PRIVATE'
                     )
                 ]) {
-                    sh '''
-                        set +x
-
-                        export KUBECONFIG="$KUBECONFIG_FILE"
-
-                        helm upgrade --install \
-                          "$HELM_RELEASE" \
-                          cicd/helm \
-                          --namespace "$K8S_NAMESPACE" \
-                          --values cicd/helm/values.yaml \
-                          --values cicd/helm/values-oci-k3s.yaml \
-                          --values "$HELM_VALUES_PRIVATE" \
-                          --set-string backend.image.repository="$BACKEND_IMAGE" \
-                          --set-string backend.image.tag="$IMAGE_TAG" \
-                          --set-string frontend.image.repository="$FRONTEND_IMAGE" \
-                          --set-string frontend.image.tag="$IMAGE_TAG" \
-                          --history-max 10 \
-                          --atomic \
-                          --wait \
-                          --timeout 5m
-
-                        kubectl \
-                          --namespace "$K8S_NAMESPACE" \
-                          rollout status \
-                          deployment/hangat-backend \
-                          --timeout=180s
-
-                        kubectl \
-                          --namespace "$K8S_NAMESPACE" \
-                          rollout status \
-                          deployment/hangat-frontend \
-                          --timeout=180s
-                    '''
+                    sh deploymentScript()
                 }
             }
         }
@@ -296,6 +284,12 @@ pipeline {
 
     post {
         always {
+            // cleanup의 deleteDir 전에 선별된 진단 파일만 보관한다.
+            archiveArtifacts(
+                artifacts: 'deployment-diagnostics/*.log',
+                allowEmptyArchive: true,
+                onlyIfSuccessful: false
+            )
             junit(
                 testResults: 'backend/build/test-results/test/*.xml',
                 allowEmptyResults: true
@@ -318,4 +312,88 @@ pipeline {
             deleteDir()
         }
     }
+}
+
+String deploymentScript() {
+    return '''
+        set -eu
+        set +x
+        umask 077
+        : "${KUBECONFIG_FILE:?}"
+        : "${HELM_VALUES_PRIVATE:?}"
+        : "${HELM_RELEASE:?}"
+        : "${K8S_NAMESPACE:?}"
+        : "${BACKEND_IMAGE:?}"
+        : "${FRONTEND_IMAGE:?}"
+        : "${IMAGE_TAG:?}"
+        : "${DEPLOYMENT_REVISION:?}"
+        export KUBECONFIG="$KUBECONFIG_FILE"
+        mkdir -p deployment-diagnostics
+        selector="app.kubernetes.io/instance=$HELM_RELEASE"
+
+        collect_diagnostics() {
+            # Secret/env/Pod YAML/describe와 로그 전문은 보관하지 않는다.
+            {
+                date -u '+%Y-%m-%dT%H:%M:%SZ'
+                kubectl --request-timeout=5s -n "$K8S_NAMESPACE" get deployments -l "$selector" \
+                  -o 'custom-columns=NAME:.metadata.name,READY:.status.readyReplicas,DESIRED:.spec.replicas,IMAGE:.spec.template.spec.containers[*].image' 2>/dev/null || echo 'deployment status unavailable'
+                kubectl --request-timeout=5s -n "$K8S_NAMESPACE" get pods -l "$selector" \
+                  -o 'custom-columns=NAME:.metadata.name,PHASE:.status.phase,READY:.status.containerStatuses[*].ready,RESTARTS:.status.containerStatuses[*].restartCount,WAIT:.status.containerStatuses[*].state.waiting.reason,EXIT:.status.containerStatuses[*].lastState.terminated.exitCode,REASON:.status.containerStatuses[*].lastState.terminated.reason,IMAGE:.spec.containers[*].image' 2>/dev/null || echo 'pod status unavailable'
+                kubectl --request-timeout=5s -n "$K8S_NAMESPACE" get cronjobs,jobs -l "$selector" \
+                  -o 'custom-columns=KIND:.kind,NAME:.metadata.name,SUSPEND:.spec.suspend,SUCCEEDED:.status.succeeded,FAILED:.status.failed,LAST_SUCCESS:.status.lastSuccessfulTime' 2>/dev/null || echo 'batch status unavailable'
+                # event.message에는 URL·자격증명이 들어갈 수 있어 원인 코드만 수집한다.
+                kubectl --request-timeout=5s -n "$K8S_NAMESPACE" get events --field-selector=type=Warning \
+                  -o 'custom-columns=TIME:.lastTimestamp,KIND:.involvedObject.kind,NAME:.involvedObject.name,REASON:.reason,COUNT:.count' 2>/dev/null || echo 'event status unavailable'
+            } >> deployment-diagnostics/deployment-state.log
+
+            pods=$(kubectl --request-timeout=5s -n "$K8S_NAMESPACE" get pods -l "$selector" -o name 2>/dev/null | head -n 10)
+            for pod in $pods; do
+                for previous in '' '--previous'; do
+                    # 파이프에서 바로 예외 클래스명만 추출한다. 원문은 임시 파일에도 쓰지 않는다.
+                    types=$(kubectl --request-timeout=5s -n "$K8S_NAMESPACE" logs "$pod" --all-containers=true --pod-running-timeout=1s --tail=150 --limit-bytes=32768 $previous 2>/dev/null \
+                      | grep -Eo '([a-zA-Z_][a-zA-Z0-9_]*\\.)+[a-zA-Z_][a-zA-Z0-9_]*(Exception|Error)' | sort -u || true)
+                    if [ -n "$types" ]; then
+                        printf '%s %s\\n%s\\n' "$pod" "${previous:-current}" "$types" >> deployment-diagnostics/exception-types.log
+                    fi
+                done
+            done
+        }
+
+        # --atomic이 실패 Pod를 지우기 전의 상태도 보관한다.
+        (
+            while :; do
+                collect_diagnostics || true
+                sleep 10
+            done
+        ) &
+        observer=$!
+        cleanup() {
+            code=$?
+            trap - EXIT
+            kill "$observer" 2>/dev/null || true
+            wait "$observer" 2>/dev/null || true
+            collect_diagnostics || true
+            exit "$code"
+        }
+        trap cleanup EXIT
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+
+        helm upgrade --install "$HELM_RELEASE" cicd/helm \
+          --namespace "$K8S_NAMESPACE" \
+          --values cicd/helm/values.yaml \
+          --values cicd/helm/values-oci-k3s.yaml \
+          --values "$HELM_VALUES_PRIVATE" \
+          --set-string backend.configEnv.HANGAT_ASYNC_ENABLED=true \
+          --set ingress.swagger.enabled=false \
+          --set-string deployment.revision="$DEPLOYMENT_REVISION" \
+          --set-string backend.image.repository="$BACKEND_IMAGE" \
+          --set-string backend.image.tag="$IMAGE_TAG" \
+          --set-string frontend.image.repository="$FRONTEND_IMAGE" \
+          --set-string frontend.image.tag="$IMAGE_TAG" \
+          --history-max 10 --atomic --wait --timeout 5m
+
+        kubectl --namespace "$K8S_NAMESPACE" rollout status "deployment/$HELM_RELEASE-backend" --timeout=180s
+        kubectl --namespace "$K8S_NAMESPACE" rollout status "deployment/$HELM_RELEASE-frontend" --timeout=180s
+    '''
 }

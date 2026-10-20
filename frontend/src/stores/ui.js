@@ -6,9 +6,14 @@ export const useUiStore = defineStore('ui', {
   state: () => ({
     toasts: [],
     /** 알림 개수를 다시 세야 할 때 올린다 (헤더 · 마이페이지 탭 배지가 이 값을 지켜본다) */
-    alertsVersion: 0
+    alertsVersion: 0,
+    aiCourseEntryVersion: 0
   }),
   actions: {
+    enterAiCourse (path, event) {
+      if (path !== '/ai-course' || event?.ctrlKey || event?.metaKey || event?.shiftKey || event?.altKey || (event?.button != null && event.button !== 0)) return
+      this.aiCourseEntryVersion++
+    },
     bumpAlerts () {
       this.alertsVersion++
     },

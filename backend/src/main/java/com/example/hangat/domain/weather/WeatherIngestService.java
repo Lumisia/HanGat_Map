@@ -52,6 +52,11 @@ public class WeatherIngestService {
 
     /** 단기예보로 채우는 날짜 수(D+0~3). 그 뒤는 중기예보 몫이다. */
     static final int SHORT_TERM_DAYS = 4;
+    /**
+     * 권역마다 반드시 있어야 하는 단기 날짜 수(D+0~2). D+3은 단기예보 창의 끝이라 발표 시각에 따라 비기도 한다 -
+     * 그걸 실패로 치면 저장은 잘 됐는데 배치만 실패로 남고 재시도가 기상청을 다시 부른다. 비면 그날은 '정보 없음'.
+     */
+    static final int REQUIRED_SHORT_TERM_DAYS = 3;
     /** 중기예보 필드가 있는 발표일 기준 오프셋. 3일째는 단기가 덮으므로 4부터. */
     private static final int MID_FROM = 4;
     private static final int MID_TO = 7;
@@ -75,9 +80,17 @@ public class WeatherIngestService {
      * 적재 결과. 실패 건수와 발표 시각을 같이 돌려주는 것이 핵심이다 - 저장 자체는 성공하면서 한 권역이 조용히
      * 빠질 수 있으므로, 이 수치가 없으면 "왜 서부만 날씨가 없지"를 한참 뒤에야 알게 된다.
      */
-    public record WeatherIngestResult(int regions, int shortRows, int midRows, int inserted, int updated,
-                                      int shortFailures, boolean midFailed,
+    public record WeatherIngestResult(int regions, int shortCoveredRegions, int shortRows, int midRows,
+                                      int inserted, int updated, int shortFailures, boolean midFailed,
                                       String shortIssuedAtKst, String midIssuedAtKst) {
+        /**
+         * 빈 API 응답은 예외를 내지 않으므로 권역마다 D+0~2({@link #REQUIRED_SHORT_TERM_DAYS}) 행이 있는지 확인한다.
+         * 총수 기준을 권역×3으로 낮추는 식으로 완화하면 한 권역이 이틀치만 받아도 다른 권역의 나흘치와 합이 맞아
+         * 완전으로 오판하므로, 총수가 아니라 권역별로 센다.
+         */
+        public boolean hasCompleteShortTermCoverage() {
+            return regions > 0 && shortFailures == 0 && shortCoveredRegions == regions;
+        }
     }
 
     public WeatherIngestResult ingest() {
@@ -93,7 +106,7 @@ public class WeatherIngestService {
                 .toList();
         if (regions.isEmpty()) {
             log.warn("기상청 격자가 있는 권역이 없어 날씨 적재를 건너뛴다 - 마스터 초기화(regions.kma_grid_x/y)를 확인할 것");
-            return new WeatherIngestResult(0, 0, 0, 0, 0, 0, false, null, null);
+            return new WeatherIngestResult(0, 0, 0, 0, 0, 0, 0, false, null, null);
         }
         DataSource shortSource = source(SOURCE_SHORT);
         DataSource midSource = source(SOURCE_MID);
@@ -105,23 +118,46 @@ public class WeatherIngestService {
         // 단기: 권역별 격자 호출. 한 권역 실패가 나머지를 막지 않는다
         List<WeatherForecast> shortRows = new ArrayList<>();
         int shortFailures = 0;
+        int shortCoveredRegions = 0;
+        List<String> optionalGaps = new ArrayList<>();   // 필수가 아닌 날(D+3)의 결측 - 한 줄로 모아 경고한다
         for (Region region : regions) {
             try {
                 List<ShortTermItem> items = client.fetchShortTerm(
                         shortIssue.baseDate(), shortIssue.baseTime(), region.getKmaGridX(), region.getKmaGridY());
+                int requiredDaysFound = 0;
                 for (int offset = 0; offset < SHORT_TERM_DAYS; offset++) {
                     LocalDate day = today.plusDays(offset);
                     DailySummary summary = WeatherDailySummarizer.fromShortTerm(day, items);
                     if (summary.isEmpty()) {
-                        continue;   // 그날 자료가 없으면 행을 만들지 않는다
+                        // 그날 자료가 없으면 행을 만들지 않는다. D+0~2가 비면 아래 판정에 걸리고, D+3은 모아서 한 번 경고한다
+                        if (offset >= REQUIRED_SHORT_TERM_DAYS) {
+                            optionalGaps.add(region.getCode() + ":D+" + offset);
+                        }
+                        log.debug("단기예보 D+{} 자료 없음 region={} issue={}", offset, region.getCode(), shortIssue.tmFc());
+                        continue;
+                    }
+                    if (offset < REQUIRED_SHORT_TERM_DAYS) {
+                        requiredDaysFound++;
                     }
                     shortRows.add(row(region, shortSource, day, shortIssue, summary));
+                }
+                if (requiredDaysFound == REQUIRED_SHORT_TERM_DAYS) {
+                    shortCoveredRegions++;
+                } else {
+                    log.warn("단기예보 D+0~{} 가운데 {}일만 있음 region={} issue={} - 배치 판정에서 불완전으로 잡힌다",
+                            REQUIRED_SHORT_TERM_DAYS - 1, requiredDaysFound, region.getCode(), shortIssue.tmFc());
                 }
             } catch (BaseException e) {
                 shortFailures++;
                 log.warn("단기예보 수집 실패 region={} grid={}/{} issue={} - {}",
                         region.getCode(), region.getKmaGridX(), region.getKmaGridY(), shortIssue.tmFc(), e.getMessage());
             }
+        }
+
+        if (!optionalGaps.isEmpty()) {
+            // 중기는 D+4부터라 D+3은 아무도 덮지 않는다 - 매 회차 비면 단기예보 창(발표 시각 선택)을 의심할 것
+            log.warn("단기예보 창 끝 자료 없음 {}건 {} issue={} - 그날은 화면에 '정보 없음'으로 남는다",
+                    optionalGaps.size(), optionalGaps, shortIssue.tmFc());
         }
 
         // 중기: 제주도 단위 한 번 호출 → 전 권역 같은 값. 단기가 덮는 날짜(D+0~3)는 단기만 남긴다
@@ -185,8 +221,8 @@ public class WeatherIngestService {
             updated += upserted.updated();
         }
 
-        WeatherIngestResult result = new WeatherIngestResult(regions.size(), shortRows.size(), midRows.size(),
-                inserted, updated, shortFailures, midFailed, shortIssue.tmFc(), midIssue.tmFc());
+        WeatherIngestResult result = new WeatherIngestResult(regions.size(), shortCoveredRegions, shortRows.size(),
+                midRows.size(), inserted, updated, shortFailures, midFailed, shortIssue.tmFc(), midIssue.tmFc());
         log.info("날씨 적재 완료 {}", result);
         if (shortFailures > 0 || midFailed) {
             log.warn("날씨 적재 일부 실패 - 단기 실패 권역 {}곳, 중기 실패 {} (빠진 날짜·권역은 화면에서 '정보 없음')",

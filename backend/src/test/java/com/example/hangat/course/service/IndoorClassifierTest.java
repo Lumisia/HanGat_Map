@@ -30,6 +30,17 @@ class IndoorClassifierTest {
     }
 
     @Test
+    void 이름만으로도_같은_키워드로_판정한다() {
+        // AI 후보 사실(PlaceFact)과 응답 DTO는 Place 엔티티가 없고 이름만 있다 - 배치 코스와 같은 목록으로 판정해야 한다
+        assertThat(IndoorClassifier.isIndoor("제주민속자연사박물관")).isTrue();
+        assertThat(IndoorClassifier.isIndoor("성산일출봉")).isFalse();
+        assertThat(IndoorClassifier.isIndoor((String) null)).isFalse();
+        assertThat(IndoorClassifier.isIndoor((Place) null)).isFalse();
+        assertThat(IndoorClassifier.isIndoor(named("빛의 벙커 전시관")))
+                .isEqualTo(IndoorClassifier.isIndoor("빛의 벙커 전시관"));
+    }
+
+    @Test
     void 온천_수족관_체험관도_실내다() {
         assertThat(IndoorClassifier.isIndoor(named("산방산탄산온천"))).isTrue();
         assertThat(IndoorClassifier.isIndoor(named("아쿠아플라넷 수족관"))).isTrue();

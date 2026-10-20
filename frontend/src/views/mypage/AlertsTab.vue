@@ -1,213 +1,136 @@
 <script setup>
-/**
- * 예보 변경 알림 (요구사항 정의서 MY_008).
- *
- * **알림 역할만 한다.** 저장 시점 예보와 최신 예보를 나란히 보여주고 끝이다.
- *  - 카드를 누르면 읽음 처리된다 (다른 화면으로 이동하지 않는다)
- *  - 오른쪽 위 X 로 닫는다
- *  - 보관: 만들어진 지 일주일 안이거나 여행이 안 끝났으면 남는다 (mypage.js isAlertLive)
- *
- * ⚠️ 2026-08-15 — 카드 안의 버튼 3종을 **뺐다**
- *    (`일정 보기` · `이 날짜만 다시 짜기` · `읽음으로`).
- *    그래서 MY_008 의 **부분 재구성이 화면에서 닿을 수 없게 됐다.**
- *    API(`regenerateAffectedDay`)와 그 테스트는 그대로 살아 있다 —
- *    코스 상세 같은 다른 자리에 붙이면 바로 다시 쓸 수 있다.
- *    요구사항이 사라진 게 아니라 진입점이 없어진 상태라는 걸 적어 둔다.
- */
-import { computed, onMounted, ref } from 'vue'
-import WeatherBadge from '../../components/common/WeatherBadge.vue'
-import EmptyState from '../../components/common/EmptyState.vue'
-import StateBlock from '../../components/common/StateBlock.vue'
-import { listAlerts, setAlertRead, dismissAlert, ALERT_RETENTION_DAYS } from '../../api/mypage.js'
-import { useUiStore } from '../../stores/ui.js'
-import { useApiError } from '../../composables/useApiError.js'
-import { fmt, fmtDateTime, fmtRelative } from '../../utils/format.js'
+/** 서버의 전체 알림을 유형별로 일곱 개씩 조회한다. 삭제는 현재 필터에 국한되지 않는다. */
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { useNotificationStore } from '../../stores/notifications.js'
+import { useNotificationInbox } from '../../composables/useNotificationInbox.js'
+import { getBackendSessionVersion } from '../../api/backendClient.js'
+import { NOTIFICATIONS_ENABLED, NOTIFICATION_FILTERS, notificationDestination, notificationTypeLabel, notificationActionLabel } from '../../api/notifications.js'
+import { fmtRelative } from '../../utils/format.js'
 
-const ui = useUiStore()
-const toMessage = useApiError()
+const notifications = useNotificationStore()
+const router = useRouter()
+const { items, number, totalPages, totalElements, category, loading, error, load, filter } = useNotificationInbox()
+const actionError = ref('')
+const busy = ref(false)
+const disabled = computed(() => busy.value || notifications.busy)
+const pageButtons = computed(() => {
+  const start = Math.max(0, Math.min(number.value - 2, totalPages.value - 5))
+  return Array.from({ length: Math.min(5, totalPages.value) }, (_, i) => start + i)
+})
+onMounted(() => load())
+watch(() => notifications.revision, () => { if (!busy.value) void load() })
 
-const loading = ref(true)
-const error = ref(null)
-const data = ref({ items: [], total: 0, unread: 0 })
-
-async function fetchList () {
-  loading.value = data.value.items.length === 0
-  error.value = null
+async function open (item) {
+  if (disabled.value) return
+  const epoch = getBackendSessionVersion()
+  busy.value = true; actionError.value = ''
   try {
-    data.value = await listAlerts()
-  } catch (e) {
-    const msg = toMessage(e)
-    if (msg) error.value = msg
-  } finally {
-    loading.value = false
-  }
+    if (!item.readAt) {
+      await notifications.markRead(item.id)
+      item.readAt = new Date().toISOString()
+    }
+    if (epoch === getBackendSessionVersion()) await router.push(notificationDestination(item))
+  } catch (failure) { actionError.value = failure.message || '알림을 읽음으로 표시하지 못했어요.' }
+  finally { busy.value = false }
 }
-onMounted(fetchList)
-
-const hasUnread = computed(() => data.value.unread > 0)
-
-/** 카드를 누르면 읽음 처리. 이미 읽었으면 아무 일도 하지 않는다 */
-async function markRead (a) {
-  if (a.read) return
-  a.read = true                     // 눌린 느낌을 먼저 준다
-  data.value.unread = Math.max(0, data.value.unread - 1)
-  try {
-    await setAlertRead(a.alertId, true)
-    ui.bumpAlerts()
-  } catch (e) {
-    a.read = false                  // 실패하면 되돌린다
-    data.value.unread += 1
-    const msg = toMessage(e)
-    if (msg) ui.toast(msg)
-  }
+async function act (operation) {
+  if (disabled.value) return
+  busy.value = true; actionError.value = ''
+  try { await operation(); await load() }
+  catch (failure) { actionError.value = failure.message || '알림을 처리하지 못했어요. 다시 시도해 주세요.' }
+  finally { busy.value = false }
 }
-
-async function close (a) {
-  try {
-    await dismissAlert(a.alertId)
-    await fetchList()
-    ui.bumpAlerts()
-  } catch (e) {
-    const msg = toMessage(e)
-    if (msg) ui.toast(msg)
+function deleteAll () {
+  if (disabled.value) return
+  if (window.confirm('필터와 페이지에 관계없이 모든 알림을 삭제할까요? 삭제한 알림은 다시 볼 수 없어요.')) {
+    void act(() => notifications.removeAll())
   }
 }
 </script>
 
 <template>
-  <section>
-    <div class="bar-top">
-      <div class="sect">
-        예보 변경 알림
-        <span class="cnt tnum">{{ data.total }}</span>
-        <span v-if="hasUnread" class="unread tnum">안 읽음 {{ data.unread }}</span>
+  <section class="notification-inbox" aria-labelledby="notification-title">
+    <header class="inbox-header">
+      <div><h2 id="notification-title">알림 내역</h2><p>여행의 변화와 코스 생성 결과를 확인하세요.</p></div>
+      <div v-if="NOTIFICATIONS_ENABLED" class="inbox-actions">
+        <button type="button" class="btn" :disabled="disabled || !notifications.unread" @click="act(() => notifications.markAllRead())">모두 읽음</button>
+        <button type="button" class="btn danger" :disabled="disabled" @click="deleteAll">모두 삭제</button>
       </div>
-    </div>
-
-    <p class="note lead">
-      저장 시점 예보와 최신 예보를 비교해요.
-      알림은 {{ ALERT_RETENTION_DAYS }}일 동안, 여행이 더 남았다면 끝날 때까지 남아 있어요.
-    </p>
-
-    <StateBlock :loading="loading" :error="error" :rows="3" @retry="fetchList" />
-
-    <template v-if="!loading && !error">
-      <EmptyState
-        v-if="!data.items.length"
-        title="받은 알림이 없어요"
-        hint="코스를 저장해 두면 예보가 나빠질 때 여기로 알려드려요."
-      />
-
-      <ul v-else class="list">
-        <li v-for="a in data.items" :key="a.alertId">
-          <article class="card" :class="{ unread: !a.read, low: a.severity === 'LOW' }">
-            <!-- 카드 전체가 읽음 처리 버튼이다. X 는 그 위에 따로 얹는다 -->
-            <button
-              class="hit"
-              type="button"
-              :aria-label="a.read ? `${a.courseName} 알림 (읽음)` : `${a.courseName} 알림 — 눌러서 읽음 처리`"
-              :disabled="a.read"
-              @click="markRead(a)"
-            >
-              <div class="top">
-                <span class="dot" :class="a.read ? 'read' : 'new'" aria-hidden="true" />
-                <span class="cname">{{ a.courseName }}</span>
-                <span class="when note">{{ fmtRelative(a.createdAt) }}</span>
-              </div>
-
-              <p class="line">
-                <b>{{ fmt(a.affectedDate) }}</b> ·
-                {{ a.places.length ? a.places.join(' · ') : '해당 날짜 전체' }}
-              </p>
-
-              <div class="cmp">
-                <div class="side">
-                  <div class="lbl">저장 시점 예보</div>
-                  <WeatherBadge :kind="a.before.kind" :t="a.before.t" :size="16" />
-                  <p class="note">{{ a.before.note }}</p>
-                </div>
-                <div class="arw" aria-hidden="true">→</div>
-                <div class="side now">
-                  <div class="lbl">최신 예보</div>
-                  <WeatherBadge :kind="a.after.kind" :t="a.after.t" :size="16" />
-                  <p class="note warn">{{ a.after.warning || a.after.note }}</p>
-                </div>
-              </div>
-
-              <p class="note stamp">알림 생성 {{ fmtDateTime(a.createdAt) }}</p>
-            </button>
-
-            <button class="x" type="button" :aria-label="`${a.courseName} 알림 닫기`" @click="close(a)">
-              <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
-              </svg>
-            </button>
-          </article>
+    </header>
+    <RouterLink :to="{ name: 'my-profile' }" class="settings-link">알림 수신 설정</RouterLink>
+    <p v-if="!NOTIFICATIONS_ENABLED" class="empty">알림 서비스 준비 중이에요.</p>
+    <template v-else>
+      <div class="filters" role="group" aria-label="알림 유형">
+        <button v-for="option in NOTIFICATION_FILTERS" :key="option.value" type="button"
+          :aria-pressed="category === option.value" :class="{ selected: category === option.value }"
+          :disabled="disabled" @click="filter(option.value)">{{ option.label }}</button>
+      </div>
+      <div class="list-status">
+        <span>{{ totalElements }}개의 알림</span>
+        <span v-if="loading && items.length" role="status">확인 중…</span>
+      </div>
+      <p v-if="error || actionError" class="error" role="alert">
+        {{ actionError || error }}
+        <button v-if="error" type="button" class="retry" :disabled="loading" @click="load()">다시 시도</button>
+      </p>
+      <p v-if="loading && !items.length" class="empty" role="status">알림을 불러오고 있어요.</p>
+      <p v-else-if="!error && !items.length" class="empty">{{ category === 'ALL' ? '아직 도착한 알림이 없어요.' : '이 유형의 알림이 없어요.' }}</p>
+      <ol class="inbox-list">
+        <li v-for="item in items" :key="item.id" :class="{ unread: !item.readAt }">
+          <button type="button" class="notification-open" :disabled="disabled" @click="open(item)">
+            <span class="kind">{{ notificationTypeLabel(item.type) }}</span>
+            <span class="heading"><strong>{{ item.title }}</strong><span v-if="!item.readAt" class="unread-label">안 읽음</span></span>
+            <span class="message">{{ item.message }}</span>
+            <time :datetime="item.createdAt">{{ fmtRelative(item.createdAt) }}</time>
+            <span v-if="notificationActionLabel(item)" class="action">{{ notificationActionLabel(item) }}</span>
+          </button>
+          <button type="button" class="delete-one" :aria-label="`${item.title} 알림 삭제`" :disabled="disabled"
+            @click="act(() => notifications.remove(item.id))">×</button>
         </li>
-      </ul>
+      </ol>
+      <nav v-if="totalPages > 1" class="pagination" aria-label="알림 페이지">
+        <button type="button" :disabled="number === 0 || loading || disabled" @click="load(number - 1)">이전</button>
+        <button v-for="page in pageButtons" :key="page" type="button" :aria-current="page === number ? 'page' : undefined"
+          :disabled="loading || disabled" @click="load(page)">{{ page + 1 }}</button>
+        <button type="button" :disabled="number + 1 >= totalPages || loading || disabled" @click="load(number + 1)">다음</button>
+      </nav>
+      <p v-if="totalPages > 1" class="page-summary">{{ number + 1 }} / {{ totalPages }} 페이지</p>
     </template>
   </section>
 </template>
 
 <style scoped>
-.bar-top { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
-.bar-top .sect { margin: 0; flex: 1; }
-.cnt { color: var(--tx3); font-weight: 700; }
-.unread { color: var(--busy); font-weight: 800; font-size: 11.5px; }
-.lead { margin-bottom: 14px; line-height: 1.65; }
-
-.list { display: flex; flex-direction: column; gap: 10px; }
-.card { position: relative; padding: 0; }
-.card.unread { border-color: var(--line2); background: var(--surf); }
-.card.low { opacity: .82; }
-
-/* 카드 안쪽 전체가 하나의 누름 영역 */
-.hit {
-  display: block; width: 100%; text-align: left;
-  padding: 14px 44px 14px 16px;   /* 오른쪽은 X 자리를 비워 둔다 */
-  border-radius: inherit;
-  transition: background .12s;
-}
-.hit:not(:disabled):hover { background: var(--surf2); }
-.hit:disabled { cursor: default; }
-
-/* 닫기 — 카드 오른쪽 위 */
-.x {
-  position: absolute; top: 10px; right: 10px;
-  width: 28px; height: 28px; border-radius: 50%;
-  display: inline-flex; align-items: center; justify-content: center;
-  color: var(--tx3);
-  transition: background .15s, color .15s;
-}
-.x:hover { background: var(--surf2); color: var(--tx); }
-
-.top { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-/* 상태 점은 한 가지 색만 쓴다 — 안 읽음이면 주색, 읽었으면 흐린 경계색.
-   중요도별로 색을 나누면 목록이 알록달록해지고 "안 읽음"이 안 보인다. */
-.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.dot.new { background: var(--ac); }
-.dot.read { background: var(--line2); }
-.cname { font-size: 15px; font-weight: 800; letter-spacing: -.03em; }
-.when { margin-left: auto; padding-right: 26px; }
-
-.line { font-size: 12.5px; color: var(--tx2); margin: 9px 0 11px; }
-.line b { font-weight: 800; color: var(--tx); }
-
-.cmp {
-  display: flex; align-items: center; gap: 12px;
-  background: var(--surf2); border-radius: 13px; padding: 12px 14px;
-}
-.hit:not(:disabled):hover .cmp { background: var(--surf3); }
-.side { flex: 1; min-width: 0; }
-.lbl { font-size: 11px; color: var(--tx3); font-weight: 700; margin-bottom: 6px; }
-.side .note { margin-top: 5px; }
-.warn { color: var(--busy) !important; font-weight: 700; }
-.arw { color: var(--tx3); font-size: 15px; flex-shrink: 0; }
-
-.stamp { margin-top: 8px; }
-
-@media (max-width: 560px) {
-  .cmp { flex-direction: column; align-items: stretch; gap: 8px; }
-  .arw { transform: rotate(90deg); text-align: center; }
-}
+.notification-inbox { color: var(--tx); }
+.inbox-header, .heading, .list-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.inbox-header { flex-wrap: wrap; }
+h2 { font-size: 22px; margin: 0 0 8px; }
+.inbox-header p, time, .list-status, .page-summary { color: var(--tx3); font-size: 12px; line-height: 1.7; }
+.settings-link { display: inline-block; margin-top: 12px; color: var(--ac); font-size: 13px; text-decoration: underline; }
+.inbox-actions, .filters, .pagination { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn { padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--rp); color: var(--ac); font-size: 12px; white-space: nowrap; }
+.btn.danger { color: var(--busy); }
+.filters { margin: 24px 0 16px; }
+.filters button { padding: 8px 14px; border-radius: var(--rp); background: var(--surf2); color: var(--tx2); font-size: 13px; }
+.filters button.selected { background: var(--ac); color: var(--on-ac); }
+.inbox-list { list-style: none; padding: 0; margin: 8px 0 20px; }
+.inbox-list li { position: relative; border-bottom: 1px solid var(--line); }
+.inbox-list li.unread { background: var(--ac-bg); }
+.notification-open { display: block; width: 100%; padding: 18px 44px 18px 14px; text-align: left; color: inherit; }
+.heading { align-items: baseline; flex-wrap: wrap; gap: 6px; }
+.kind { display: block; margin-bottom: 6px; font-size: 12px; color: var(--ac); }
+.message { display: block; margin: 8px 0; white-space: pre-line; overflow-wrap: anywhere; line-height: 1.65; font-size: 13px; }
+.unread-label, .action { color: var(--ac); font-size: 12px; }
+.action { display: block; margin-top: 10px; font-weight: 700; }
+.delete-one { position: absolute; right: 4px; top: 4px; width: 40px; height: 40px; border-radius: 50%; color: var(--tx3); font-size: 24px; }
+.delete-one:hover { background: var(--surf2); color: var(--busy); }
+.empty { padding: 32px 0; color: var(--tx3); font-size: 13px; }
+.error { color: var(--busy); font-size: 13px; margin-top: 12px; }
+.retry { margin-left: 8px; text-decoration: underline; }
+.pagination { justify-content: center; gap: 4px; }
+.pagination button { min-width: 36px; height: 36px; padding: 0 8px; border-radius: var(--r-df); color: var(--tx2); }
+.pagination [aria-current="page"] { background: var(--ac); color: var(--on-ac); }
+.page-summary { text-align: center; margin-top: 8px; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
 </style>

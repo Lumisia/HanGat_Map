@@ -1,3 +1,5 @@
+import { safeLoginReturnTo } from '../../utils/loginReturn.js'
+
 const STEP_SCREENS = Object.freeze({
   PROFILE_REQUIRED: 'profile',
   LINK_CONFIRMATION: 'link-confirmation',
@@ -21,7 +23,5 @@ export function normalizeOAuthCode (value) {
 
 /** OAuth 이전 화면은 외부 URL이 아닌 앱 내부 절대 경로만 허용한다. */
 export function safeOAuthReturnTo (value) {
-  return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//')
-    ? value
-    : '/mypage/reviews'
+  return safeLoginReturnTo(value)
 }

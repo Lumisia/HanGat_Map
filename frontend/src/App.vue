@@ -8,7 +8,9 @@
  *
  * MobileTabBar 와 ToastHost 는 레이아웃과 무관하게 항상 유지돼야 해서 여기 둔다.
  */
-import { computed, watch } from 'vue'
+import { computed, watch, onBeforeUnmount } from 'vue'
+import { useAuthStore } from './stores/auth.js'
+import { useNotificationStore } from './stores/notifications.js'
 import { useRoute } from 'vue-router'
 import DefaultLayout from './components/layout/DefaultLayout.vue'
 import BareLayout from './components/layout/BareLayout.vue'
@@ -17,6 +19,13 @@ import MobileTabBar from './components/layout/MobileTabBar.vue'
 import ToastHost from './components/common/ToastHost.vue'
 
 const route = useRoute()
+const auth = useAuthStore()
+const notifications = useNotificationStore()
+watch(() => auth.user?.userId, id => {
+  if (id != null) notifications.start()
+  else notifications.stop()
+}, { immediate: true, flush: 'sync' })
+onBeforeUnmount(() => notifications.stop())
 
 const LAYOUTS = { default: DefaultLayout, bare: BareLayout, map: MapLayout }
 

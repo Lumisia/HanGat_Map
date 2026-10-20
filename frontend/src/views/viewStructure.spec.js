@@ -7,9 +7,6 @@ describe('route view organization', () => {
   it('keeps every route screen inside its feature view folder', () => {
     expect(Object.keys(groupedViews)).toEqual(expect.arrayContaining([
       './ai-course/AiCourseView.vue',
-      './ai-course/RecommendationView.vue',
-      './ai-course/TravelSearchView.vue',
-      './course/CourseDetailView.vue',
       './course/SavedCoursesView.vue',
       './home/HomeView.vue',
       './map/MapView.vue',

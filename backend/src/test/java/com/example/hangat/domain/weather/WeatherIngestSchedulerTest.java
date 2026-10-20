@@ -19,7 +19,7 @@ import static org.mockito.Mockito.verify;
 class WeatherIngestSchedulerTest {
 
     private static final WeatherIngestResult OK =
-            new WeatherIngestResult(4, 16, 16, 32, 0, 0, false, "202609100500", "202609100600");
+            new WeatherIngestResult(4, 4, 16, 16, 32, 0, 0, false, "202609100500", "202609100600");
 
     private final WeatherIngestService service = mock(WeatherIngestService.class);
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { AccommodationInput, KakaoPlaceSearchResult } from '../../assets/types/course'
 import KakaoPlaceSearch from './KakaoPlaceSearch.vue'
+import AppIcon from '../common/AppIcon.vue'
 
 const props = defineProps<{ selected?: AccommodationInput }>()
 const emit = defineEmits<{ select: [value: AccommodationInput]; clear: [] }>()
@@ -20,7 +21,7 @@ function clearSelection() {
 
 <template>
   <div class="accommodation-search">
-    <span class="accommodation-label">숙소</span>
+    <span class="accommodation-label"><AppIcon name="home" :size="15" />숙소</span>
     <template v-if="selected">
       <div class="selected-accommodation">
         <div><small>선택한 숙소</small><b>{{ selected.place_name }}</b><span>{{ selected.road_address || selected.address }}</span></div>
@@ -32,5 +33,6 @@ function clearSelection() {
 </template>
 
 <style scoped>
+.accommodation-label{display:flex;align-items:center;gap:7px}.accommodation-label :deep(svg){color:var(--course-accent)}
 .accommodation-search{display:grid;gap:6px}.accommodation-label{color:var(--course-text);font-size:.75rem;font-weight:800}.selected-accommodation{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid var(--course-line);border-radius:11px;background:var(--course-surface)}.selected-accommodation>div:first-child{display:grid;gap:2px;min-width:0}.selected-accommodation b{font-size:.78rem}.selected-accommodation span{overflow:hidden;color:var(--course-text-3);font-size:.66rem;text-overflow:ellipsis;white-space:nowrap}.selected-accommodation button{flex:0 0 auto;border:0;border-radius:9px;background:var(--course-accent-bg);padding:7px 10px;color:var(--course-accent-dark);font-size:.68rem;font-weight:800}.selected-accommodation small{color:var(--course-accent-dark);font-size:.63rem;font-weight:800}.selected-accommodation>div:last-child{display:flex;gap:5px}
 </style>

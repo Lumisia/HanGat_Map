@@ -23,3 +23,24 @@ spring:
     out-of-order: false
     baseline-on-migrate: false
     baseline-version: 1
+
+# HTTP client/converter debug or trace logging can contain AI prompts and raw responses.
+# Keep diagnostics in the application's allowlisted recorder, never wire/body logging.
+logging:
+  level:
+    org.springframework.web.client: 'OFF'
+    org.springframework.http.converter: 'OFF'
+
+# KTO candidate lookup only; duration suffixes are required (s/ms).
+tour-api:
+  connect-timeout: ${KTO_CONNECT_TIMEOUT:3s}
+  read-timeout: ${KTO_READ_TIMEOUT:10s}
+
+# 착한가격 CSV(resources/data/goodprice_jeju.csv) 발행 기준일 - CSV 를 교체하면 같이 바꾼다
+hangat:
+  # Member async generation and own-request history are shipped together.
+  # Shared by dev/local and prod; explicit false remains available.
+  async:
+    enabled: ${HANGAT_ASYNC_ENABLED:true}
+  goodprice:
+    base-date: 2026-06-30

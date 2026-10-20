@@ -1,5 +1,5 @@
 /**
- * 마이페이지 API (요구사항 정의서 MY_001 ~ MY_008).
+ * 저장 코스·알림용 기존 임시 API. 내 리뷰·찜은 myActivity.js의 실제 서버 API를 사용한다.
  *
  * 모든 조회·변경은 **토큰의 userId 로만** 대상을 좁힌다.
  * 요청 본문에 들어온 ID 를 믿지 않는다 (MY_002 / MY_005 / MY_007 의 타인 데이터 접근 금지 조건).
@@ -8,7 +8,7 @@
 import { call, ApiError, nextId } from './client.js'
 import { PLACE_BY_ID, PLACE_BY_NAME } from '../data/places.js'
 import { crowdOn, weatherOn, tier, drive } from '../utils/crowd.js'
-import { iso, toDate } from '../utils/format.js'
+import { iso, toDate, todayKst, tripPhase } from '../utils/format.js'
 
 /* ────────────────────────── 공통 ────────────────────────── */
 
@@ -52,17 +52,6 @@ function page (items, { page: p = 1, size = 5 }) {
   }
 }
 
-function activeReviews (db) {
-  return db.reviews.filter(r => !r.deletedAt && r.statusCode === 'ACTIVE')
-}
-
-/** 장소의 리뷰 개수·평균 별점 — 삭제 후 재계산 대상 (MY_005) */
-export function computePlaceRating (db, placeId) {
-  const list = activeReviews(db).filter(r => r.placeId === placeId)
-  if (!list.length) return { count: 0, average: null }
-  const sum = list.reduce((a, r) => a + r.rating, 0)
-  return { count: list.length, average: Math.round((sum / list.length) * 10) / 10 }
-}
 
 /* ────────────────────────── MY_001 저장 코스 목록 ────────────────────────── */
 
@@ -121,7 +110,7 @@ function courseSummary (db, course, savedAt) {
     crowdTier: tier(avgCrowd),
     shared: !!share,
     shareToken: share ? share.token : null,
-    isPast: toDate(course.endDate) < new Date(new Date().toDateString())
+    isPast: tripPhase(course.startDate, course.endDate) === 'PAST'
   }
 }
 
@@ -300,159 +289,6 @@ export function getSharedCourse (token) {
   })
 }
 
-/* ────────────────────────── MY_004 / MY_005 리뷰 ────────────────────────── */
-
-export const REVIEW_SORTS = [
-  { key: 'created_desc', label: '최신 작성순' },
-  { key: 'rating_desc', label: '별점 높은순' },
-  { key: 'rating_asc', label: '별점 낮은순' }
-]
-
-function reviewView (db, r) {
-  const p = PLACE_BY_ID[r.placeId]
-  return {
-    reviewId: r.reviewId,
-    placeId: r.placeId,
-    placeName: p ? p.name : '알 수 없는 장소',
-    placeCategory: p ? p.category : null,
-    placeRegion: p ? p.region : null,
-    rating: r.rating,
-    content: r.content,
-    crowdReport: r.crowdReport,
-    photos: r.photos || [],
-    createdAt: r.createdAt,
-    updatedAt: r.updatedAt,
-    edited: r.updatedAt !== r.createdAt
-  }
-}
-
-export function listMyReviews ({ sort = 'created_desc', page: p = 1, size = 4 } = {}) {
-  return call(({ userId, db }) => {
-    const rows = activeReviews(db).filter(r => r.userId === userId)
-    rows.sort((a, b) => {
-      if (sort === 'rating_desc') return b.rating - a.rating || toDate(b.createdAt) - toDate(a.createdAt)
-      if (sort === 'rating_asc') return a.rating - b.rating || toDate(b.createdAt) - toDate(a.createdAt)
-      return toDate(b.createdAt) - toDate(a.createdAt)
-    })
-    return page(rows.map(r => reviewView(db, r)), { page: p, size })
-  }, { auth: true })
-}
-
-export function updateMyReview (reviewId, { rating, content }) {
-  return call(({ userId, db }) => {
-    const r = db.reviews.find(x => x.reviewId === reviewId && !x.deletedAt)
-    if (!r) throw new ApiError(404, 'REVIEW_NOT_FOUND', '리뷰를 찾을 수 없어요')
-    if (r.userId !== userId) throw new ApiError(403, 'FORBIDDEN', '내가 쓴 리뷰만 고칠 수 있어요')
-
-    const num = Number(rating)
-    if (!Number.isInteger(num) || num < 1 || num > 5) {
-      throw new ApiError(400, 'VALIDATION_FAILED', '별점은 1~5점이에요', { rating: '별점을 선택해 주세요' })
-    }
-    const text = String(content || '').trim()
-    if (!text) {
-      throw new ApiError(400, 'VALIDATION_FAILED', '리뷰 내용을 입력해 주세요', { content: '리뷰 내용을 입력해 주세요' })
-    }
-    r.rating = num
-    r.content = text
-    r.updatedAt = new Date().toISOString()
-    return { review: reviewView(db, r), placeRating: computePlaceRating(db, r.placeId) }
-  }, { auth: true })
-}
-
-/** 멱등 삭제 + 첨부 사진 제거 + 장소 평점 재계산 (MY_005) */
-export function deleteMyReview (reviewId) {
-  return call(({ userId, db }) => {
-    const r = db.reviews.find(x => x.reviewId === reviewId)
-    if (r && r.userId !== userId) {
-      throw new ApiError(403, 'FORBIDDEN', '다른 사람의 리뷰는 삭제할 수 없어요')
-    }
-    if (!r || r.deletedAt) {
-      return { ok: true, alreadyDeleted: true, placeRating: r ? computePlaceRating(db, r.placeId) : null }
-    }
-    r.deletedAt = new Date().toISOString()
-    r.statusCode = 'DELETED'
-    r.photos = [] // review_photos ON DELETE CASCADE 와 동일한 효과
-    return { ok: true, alreadyDeleted: false, placeRating: computePlaceRating(db, r.placeId) }
-  }, { auth: true })
-}
-
-/* ────────────────────────── MY_006 / MY_007 찜 ────────────────────────── */
-
-export const FAVORITE_SORTS = [
-  { key: 'recent', label: '최근 찜한 순' },
-  { key: 'name', label: '장소명순' },
-  { key: 'category', label: '카테고리순' }
-]
-
-export function listFavorites ({ sort = 'recent', date = null } = {}) {
-  return call(({ userId, db }) => {
-    const target = date ? toDate(date) : new Date()
-    const rows = db.favorites
-      .filter(f => f.userId === userId)
-      .map(f => {
-        const p = PLACE_BY_ID[f.placeId]
-        if (!p) return null
-        const c = crowdOn(p, target)
-        const w = weatherOn(target)
-        const rating = computePlaceRating(db, p.id)
-        return {
-          favoritePlaceId: f.favoritePlaceId,
-          createdAt: f.createdAt,
-          placeId: p.id,
-          name: p.name,
-          category: p.category,
-          region: p.region,
-          addr: p.addr,
-          fee: p.fee,
-          indoor: p.indoor,
-          park: p.park,
-          toilet: p.toilet,
-          hours: p.hours,
-          x: p.x,
-          y: p.y,
-          crowd: c,
-          crowdTier: tier(c),
-          weather: { kind: w.k, t: w.t },
-          rating: rating.average,
-          reviewCount: rating.count
-        }
-      })
-      .filter(Boolean)
-
-    rows.sort((a, b) => {
-      if (sort === 'name') return a.name.localeCompare(b.name, 'ko')
-      if (sort === 'category') {
-        return a.category.localeCompare(b.category, 'ko') || a.name.localeCompare(b.name, 'ko')
-      }
-      return toDate(b.createdAt) - toDate(a.createdAt)
-    })
-    return { items: rows, total: rows.length, date: iso(target) }
-  }, { auth: true })
-}
-
-export function removeFavorite (placeId) {
-  return call(({ userId, db }) => {
-    const before = db.favorites.length
-    db.favorites = db.favorites.filter(f => !(f.userId === userId && f.placeId === placeId))
-    return { ok: true, removed: before !== db.favorites.length }
-  }, { auth: true })
-}
-
-/** 지도/상세에서 다시 찜할 때 쓰는 경로 — 중복 찜은 만들지 않는다 (MAP_009) */
-export function addFavorite (placeId) {
-  return call(({ userId, db }) => {
-    if (!PLACE_BY_ID[placeId]) throw new ApiError(404, 'PLACE_NOT_FOUND', '장소를 찾을 수 없어요')
-    const exists = db.favorites.find(f => f.userId === userId && f.placeId === placeId)
-    if (exists) return { ok: true, duplicated: true }
-    db.favorites.push({
-      favoritePlaceId: nextId('favorite', 'f'),
-      userId,
-      placeId,
-      createdAt: new Date().toISOString()
-    })
-    return { ok: true, duplicated: false }
-  }, { auth: true })
-}
 
 /* ────────────────────────── MY_008 예보 변경 알림 ────────────────────────── */
 
@@ -498,10 +334,8 @@ export function isAlertLive (db, a, now = new Date()) {
 
   const end = alertTripEnd(db, a)
   if (!end) return false
-  // 종료일 당일까지는 남긴다 (자정 기준 비교)
-  const endOfTrip = toDate(end)
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  return endOfTrip >= today
+  // Date-only strings stay date-only. The last day includes KST 23:59:59.
+  return end >= todayKst(now)
 }
 
 export function listAlerts ({ onlyUnread = false } = {}) {

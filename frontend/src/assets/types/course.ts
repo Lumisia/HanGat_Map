@@ -36,7 +36,7 @@ export interface KakaoPlaceSearchResult {
 export interface AccommodationInput extends KakaoPlaceSearchResult { region?: RegionRef['code']; image_url?: string }
 export interface AccommodationRecommendation extends AccommodationInput { recommendation_reason: string }
 export interface CourseCondition {
-  start_date: string; end_date: string; people: number; budget_total: number; transport: Transport
+  start_date: string; end_date: string; people: number; transport: Transport
   course_regions: RegionRef[]; course_styles: CourseStyle[]; course_place_preferences: PlacePreference[]; accommodation?: AccommodationInput
 }
 export interface CourseItemCost {
@@ -52,7 +52,6 @@ export interface CourseCostSummary {
 }
 export interface CourseBudgetSummary {
   has_cost_data: boolean
-  budget_total?: number
   verified_total: number
   estimated_total?: number
   estimated_min?: number
@@ -60,13 +59,12 @@ export interface CourseBudgetSummary {
   total_expected?: number
   total_expected_min?: number
   total_expected_max?: number
-  remaining_budget?: number
-  usage_rate?: number
-  over_budget?: boolean
   unknown_count: number
 }
 export interface CourseItem {
   id: number; course_id: number; place_id: number; place_name: string; category_name: string; image_url?: string
+  /** 폐업(CLOSED)이면 카드가 '폐업' 배지를 단다 - 저장된 코스에서 지우지는 않는다 */
+  place_business_status?: 'OPEN' | 'TEMP_CLOSED' | 'CLOSED' | 'UNKNOWN' | null
   candidate_id?: string; source_code?: PlaceSourceCode; source_place_id?: string
   address?: string; road_address?: string; latitude?: number; longitude?: number
   day_no: number; position: number; visit_date: string; start_time?: string; end_time?: string
@@ -75,7 +73,12 @@ export interface CourseItem {
   recommendation_reason?: string; replaced_from_place_id?: number; gap_before?: CourseGap
   weather_condition?: WeatherCondition; temperature?: number; precipitation_probability?: number
   weather_warning?: string; weather_influenced?: boolean
+  weather?: Array<{ forecast_date: string; forecast_time?: string | null; sky_condition_code?: string | null; precipitation_type_code?: string | null;
+    precipitation_probability?: number | null; daily_evidence?: { source_code: string; region_code: string;
+      spatial_scope: string; granularity: string; issued_at_utc: string; temp_min?: number | null; temp_max?: number | null } | null }> | null
   operating_hours_warning?: boolean; accommodation_influenced?: boolean; costs: CourseItemCost[]
+  /** 실내 여부 - 백엔드 이름 키워드 휴리스틱(IndoorClassifier). 비 예보일 '실내 위주' 배지 근거. 옛 응답이면 없다 */
+  indoor?: boolean
 }
 export interface CourseDay {
   day_no: number; visit_date: string; items: CourseItem[]
@@ -102,28 +105,20 @@ export interface CarRouteResult {
   cached: boolean; fetched_at: string; days: CarDayRoute[]
 }
 export interface CourseResult {
-  id: number; course_type: CourseType; generation_reason: GenerationReason; status: CourseStatus; title?: string
+  id: number; course_type: CourseType; generation_reason?: GenerationReason; status: CourseStatus; title?: string
+  swappable?: boolean; manageable?: boolean
   claim_token?: string; claim_expires_at?: string
-  start_date: string; end_date: string; people: number; budget_total?: number; transport: Transport
-  estimated_cost_min?: number; estimated_cost_max?: number; average_congestion_rate?: number
+  start_date: string; end_date: string; people: number; transport: Transport
+  estimated_cost_min?: number; estimated_cost_max?: number; average_congestion_rate?: number | null
   cost_summary?: CourseCostSummary; budget_summary?: CourseBudgetSummary
   generation_error_code?: string; accommodation?: AccommodationInput | null; days: CourseDay[]
   car_route?: CarRouteResult
 }
 export interface AlternativePlace {
+  overview?: string | null
   place_id: number; place_name: string; category_name: string; subcategory_name?: string; image_url?: string
   distance_m: number; congestion_rate?: number; congestion_level?: CongestionLevel
   recommendation_reason: string; replacement_reason: string; radius_km?: 10|20
-}
-export interface CongestionRescheduleOption {
-  visit_date: string
-  start_time: string
-  end_time: string
-  congestion_rate: number
-  congestion_level: CongestionLevel
-  weather_condition: WeatherCondition
-  temperature: number
-  precipitation_probability: number
 }
 export interface SavedCourseSummary {
   course_id: number

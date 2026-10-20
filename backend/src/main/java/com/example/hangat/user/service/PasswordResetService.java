@@ -4,6 +4,7 @@ import com.example.hangat.common.exception.BaseException;
 import com.example.hangat.common.model.BaseResponseStatus;
 import com.example.hangat.config.security.password.PasswordHasher;
 import com.example.hangat.config.security.token.TokenHasher;
+import com.example.hangat.notification.service.inbox.NotificationService;
 import com.example.hangat.user.model.auth.PasswordResetRequest;
 import com.example.hangat.user.model.auth.RefreshRevokeReason;
 import com.example.hangat.user.model.User;
@@ -25,6 +26,7 @@ public class PasswordResetService {
     private final PasswordResetRequestRepository resetRepository;
     private final RefreshTokenRepository refreshRepository;
     private final PasswordHasher passwordHasher;
+    private final NotificationService notifications;
 
 
     /** 새 비밀번호 설정
@@ -42,6 +44,9 @@ public class PasswordResetService {
         }
 
         User user = reset.getUser();
+        if (user.isDemoAccount()) {
+            throw new BaseException(BaseResponseStatus.DEMO_PASSWORD_LOCKED);
+        }
 
         String encodedPassword = passwordHasher.encodeNew(
                 request.password(),
@@ -50,6 +55,16 @@ public class PasswordResetService {
 
         user.changePassword(encodedPassword);
         reset.markUsed();
+
+        notifications.enqueue(
+                user.getId(),
+                "SECURITY_PASSWORD_CHANGED",
+                "비밀번호가 변경됐어요",
+                "본인이 변경한 것이 아니라면 계정 보안을 확인해 주세요.",
+                "SECURITY",
+                null,
+                "PASSWORD_CHANGED:" + java.util.UUID.randomUUID()
+        );
 
         refreshRepository.findAllActiveForUpdate(user.getId())
                 .forEach(refreshToken ->

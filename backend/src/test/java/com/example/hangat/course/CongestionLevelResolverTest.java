@@ -1,7 +1,7 @@
 package com.example.hangat.course;
 
 import com.example.hangat.course.model.CongestionDto;
-import com.example.hangat.course.model.CongestionLevel;
+import com.example.hangat.map.model.enums.CongestionLevel;
 import com.example.hangat.course.model.CourseCandidateDto;
 import com.example.hangat.course.model.PreferenceType;
 import org.junit.jupiter.api.Test;
@@ -20,12 +20,12 @@ class CongestionLevelResolverTest {
     @ParameterizedTest
     @CsvSource({
             "0, QUIET",
-            "33.32, QUIET",
-            "33.33, NORMAL",
-            "33.34, NORMAL",
-            "66.66, NORMAL",
-            "66.67, CROWDED",
-            "66.68, CROWDED",
+            "33.3, QUIET",
+            "39.9, QUIET",
+            "40, NORMAL",
+            "69.9, NORMAL",
+            "70, CROWDED",
+            "99.9, CROWDED",
             "100, CROWDED"
     })
     void resolvesThreeDisplayLevelsAtBoundaries(
@@ -44,18 +44,18 @@ class CongestionLevelResolverTest {
 
     @Test
     void exposesOnlyTheOfficialThreeUserLabels() {
-        assertThat(CongestionLevel.QUIET.getLabel()).isEqualTo("쾌적");
-        assertThat(CongestionLevel.NORMAL.getLabel()).isEqualTo("보통");
-        assertThat(CongestionLevel.CROWDED.getLabel()).isEqualTo("혼잡");
+        assertThat(CongestionLevel.QUIET.label()).isEqualTo("한산");
+        assertThat(CongestionLevel.NORMAL.label()).isEqualTo("보통");
+        assertThat(CongestionLevel.CROWDED.label()).isEqualTo("혼잡");
     }
 
     @Test
     void preservesRawRateAfterCalculatingDisplayLevel() throws Exception {
-        CongestionDto congestion = congestionWithRate("66.67");
+        CongestionDto congestion = congestionWithRate("70");
 
         assertThat(CongestionLevelResolver.resolve(congestion.getCnctrRate()))
                 .contains(CongestionLevel.CROWDED);
-        assertThat(congestion.getCnctrRate()).isEqualTo("66.67");
+        assertThat(congestion.getCnctrRate()).isEqualTo("70");
     }
 
     @Test

@@ -31,6 +31,21 @@ public class TourPlaceDto {
     @JsonProperty("cat3")
     private String category3;
 
+    @JsonProperty("lclsSystm3")
+    private String classificationCode;
+
     @JsonProperty("firstimage")
     private String imageUrl;
+
+    /** Internal geometry bridge only; stored facts remain authoritative. */
+    public static TourPlaceDto fromStored(com.example.hangat.course.facts.CourseCandidate fact) {
+        TourPlaceDto value = new TourPlaceDto();
+        value.contentId = fact.identity().candidateId();
+        value.title = fact.place().name();
+        value.address = fact.place().address();
+        value.latitude = fact.place().latitude() == null ? null : fact.place().latitude().doubleValue();
+        value.longitude = fact.place().longitude() == null ? null : fact.place().longitude().doubleValue();
+        value.imageUrl = fact.place().imageUrl();
+        return value;
+    }
 }

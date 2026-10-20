@@ -88,6 +88,8 @@ export function weatherIconSvg (kind, size = 26) {
     M4.7 4.7l1.7 1.7M17.6 17.6l1.7 1.7M4.7 19.3l1.7-1.7M17.6 6.4l1.7-1.7"/></g></svg>`
   }
   if (kind === '구름') return o + `<path d="${CLOUD}" fill="#AFC0D0"/></svg>`
+  if (kind === '눈') return o + `<g stroke="#5FA8E8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 20L12 4M12 6.7L9.9 5.5M12 6.7L14.1 5.5M12 17.3L14.1 18.5M12 17.3L9.9 18.5M5.1 16L18.9 8M16.6 9.4L16.6 7M16.6 9.4L18.7 10.6M7.4 14.6L7.4 17M7.4 14.6L5.3 13.4M18.9 16L5.1 8M7.4 9.4L5.3 10.6M7.4 9.4L7.4 7M16.6 14.6L18.7 13.4M16.6 14.6L16.6 17"/></g></svg>`
   return o + `<g transform="translate(0,-2.2)"><path d="${CLOUD}" fill="#93A8BC"/></g>
     <g stroke="#3FA0E4" stroke-width="2.2" stroke-linecap="round">
     <path d="M8.2 18.6l-1 3M12 18.6l-1 3M15.8 18.6l-1 3"/></g></svg>`
@@ -122,6 +124,13 @@ export function crowd (s, i) {
 export const CROWD_KO = { calm: '한산', mid: '보통', busy: '혼잡' }
 
 /** 그 장소의 30일 예보 중 i일이 몇 번째로 한산한가 (1 = 가장 한산). 예보 없는 날은 순위에서 뺀다 */
+/** 그 장소에 예보가 있는 날 수(30일 창 안). 실측은 21~22일 - 팁 박스의 'N일 중'에 쓴다. '30일'로 적으면 사실과 다르다(최종점검 #18) */
+export function forecastDays (s) {
+  let n = 0
+  for (let k = 0; k < 30; k++) if (crowd(s, k) != null) n++
+  return n
+}
+
 export function rank30 (s, i) {
   const c = crowd(s, i)
   if (c == null) return null

@@ -12,6 +12,7 @@ import java.util.List;
 
 @Getter
 @NoArgsConstructor
+@com.fasterxml.jackson.annotation.JsonIgnoreProperties("budget_total")
 public class CourseRequestDto {
 
     @JsonProperty("start_date")
@@ -22,8 +23,6 @@ public class CourseRequestDto {
 
     private Integer people;
 
-    @JsonProperty("budget_total")
-    private Integer budgetTotal;
 
     @JsonProperty("course_regions")
     private List<CourseRegionDto> courseRegions;
@@ -41,4 +40,7 @@ public class CourseRequestDto {
     private List<PlacePreferenceDto> coursePlacePreferences;
 
     private AccommodationDto accommodation;
+
+    /** Same conditions, explicitly requesting a different composition. */
+    private boolean regenerate;
 }

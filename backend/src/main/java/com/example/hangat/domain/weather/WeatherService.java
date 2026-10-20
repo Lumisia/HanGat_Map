@@ -121,9 +121,15 @@ public class WeatherService {
                             forecast.getTempMin() == null ? null : forecast.getTempMin().intValue(),
                             forecast.getTempMax() == null ? null : forecast.getTempMax().intValue(),
                             forecast.getSkyCode(),
-                            forecast.rainProbabilityPercent()));
+                            forecast.rainProbabilityPercent(),
+                            toKst(forecast.getBaseAt())));
         }
         return week;
+    }
+
+    /** base_at은 UTC로 저장한다 - 화면 라벨용 발표 시각은 KST로 돌려준다 */
+    private static LocalDateTime toKst(LocalDateTime utc) {
+        return utc == null ? null : utc.atOffset(ZoneOffset.UTC).atZoneSameInstant(KmaIssueTimes.KST).toLocalDateTime();
     }
 
     /** 값이 없는 한 주 - 라이브로 메우거나 다른 권역 값을 빌리지 않는다. */

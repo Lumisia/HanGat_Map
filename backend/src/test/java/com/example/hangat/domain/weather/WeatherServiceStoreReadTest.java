@@ -78,6 +78,9 @@ class WeatherServiceStoreReadTest {
         assertThat(week.get(0).sky()).isEqualTo("맑음");
         assertThat(week.get(0).minTemp()).isEqualTo(20);
         assertThat(week.get(0).rainProb()).isEqualTo(10);
+        // 발표 시각은 저장된 base_at(UTC)을 KST로 - 화면이 "언제 발표된 예보인지" 적는 근거
+        assertThat(week.get(0).issuedAt())
+                .isEqualTo(BASE_NEW.atOffset(ZoneOffset.UTC).atZoneSameInstant(KmaIssueTimes.KST).toLocalDateTime());
         assertThat(week.get(6).date()).isEqualTo(today.plusDays(6));
         assertThat(week.get(6).maxTemp()).isEqualTo(34);
         verifyNoInteractions(client);

@@ -1,0 +1,54 @@
+<!doctype html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="app"></div><script type="module">
+import { createApp, h } from 'vue';
+import { createPinia } from 'pinia';
+import { createRouter, createMemoryHistory, RouterView } from 'vue-router';
+import Saved from '/src/views/course/SavedCoursesView.vue';
+import Shared from '/src/views/share/ShareCourseView.vue';
+import Header from '/src/components/layout/AppHeader.vue';
+import CourseService from '/src/services/CourseService';
+import PlaceDetailService from '/src/services/PlaceDetailService';
+import { acceptLoginResponse } from '/src/api/backendClient';
+import { useAuthStore } from '/src/stores/auth';
+import '/src/assets/styles/fonts.css';
+import '/src/assets/styles/tokens.css';
+import '/src/assets/styles/base.css';
+import '/src/assets/styles.css';
+CourseService.getSavedCourses=async()=>({ok:true,totalPages:1,totalElements:1,cards:[{id:'12',title:'서부 힐링 코스',stops:'금오름 → 목장',conditionLabel:'서부 1일'}]});
+acceptLoginResponse({tokens:{accessToken:'test-only',expiresIn:3600000},user:{userId:7}});
+window.qaSends=[];
+window.Kakao={Share:{sendDefault:x=>window.qaSends.push(x)},isInitialized:()=>true};
+const maps={load:fn=>fn(),LatLng:class{},LatLngBounds:class{extend(){}},Map:class{constructor(el){this.el=el;el.style.background='#cfe8df'}setCenter(){}panTo(){}setBounds(){}setLevel(){}relayout(){}},CustomOverlay:class{constructor(o){this.content=o.content;o.map.el.append(o.content)}setMap(m){if(!m)this.content.remove()}},Polyline:class{setMap(){}}};
+window.kakao={maps};
+const router=createRouter({history:createMemoryHistory(),routes:[{path:'/courses',component:Saved},{path:'/courses/:courseId',component:Saved},{path:'/share/:token',component:Shared},{path:'/:pathMatch(.*)*',component:{render:()=>h('p','다른 페이지')}}]});
+window.qaGo=path=>router.push(path);
+// Explicit, local-only interactive preview. Browser tests without ?preview=1 intercept HTTP themselves.
+const preview=new URLSearchParams(location.search).get('preview')==='1';
+let active=true, version=1;
+const sampleItems=['금오름','성이시돌목장','협재해수욕장'].map((name,i)=>({id:i+1,place_id:11+i,place_name:name,category_name:i===2?'해변':'관광지',region_name:'서부',place_business_status:'OPEN',image_url:null,latitude:33.35+i*.02,longitude:126.3+i*.02,position:i+1,start_time:`${10+i*2}:00:00`,end_time:`${11+i*2}:20:00`,inbound_distance_m:i?3200:null,inbound_travel_minutes:i?15:null,congestion_rate:i===2?null:24+i*8,congestion_level:i===2?null:'QUIET',congestion_label:i===2?null:'한산',weather:[]}));
+const sampleCourse={title:'서부 힐링 코스',start_date:'2026-09-20',end_date:'2026-09-21',transport:'RENTAL_CAR',days:[{day_no:1,visit_date:'2026-09-20',items:sampleItems},{day_no:2,visit_date:'2026-09-21',items:[{...sampleItems[2],id:4,position:1}]}]};
+if(preview){
+ const originalFetch=window.fetch.bind(window);
+ window.fetch=async(input,init)=>{
+  const path=new URL(typeof input==='string'?input:input.url,location.origin).pathname;
+  if(path==='/courses/12/share'){
+   if(init?.method==='POST'&&!active){active=true;version++}
+   if(init?.method==='DELETE')active=false;
+   return Response.json({success:true,code:2000,result:{active,token:active?`demo-${version}`:null}});
+  }
+  if(path.startsWith('/shared-courses/'))return active&&path.endsWith(`/demo-${version}`)?Response.json({success:true,code:2000,result:sampleCourse}):Response.json({success:false,code:3310,message:'더 이상 볼 수 없는 코스예요.'},{status:404});
+  return originalFetch(input,init);
+ };
+ PlaceDetailService.getDetail=async()=>null;
+ CourseService.deleteCourse=async()=>{};
+ CourseService.getCourseDetail=async()=>({id:'12',title:sampleCourse.title,transport:'RENTAL_CAR',manageable:true,swappable:true,conditionLabel:'서부 1박 2일',budgetLabel:'요금 확인 필요',days:sampleCourse.days.map(d=>({dayNo:d.day_no,visitDate:d.visit_date,items:d.items.map(i=>({id:i.id,placeId:i.place_id,placeName:i.place_name,categoryName:i.category_name,regionName:i.region_name,latitude:i.latitude,longitude:i.longitude,position:i.position,startTime:i.start_time,endTime:i.end_time,inboundDistanceM:i.inbound_distance_m,inboundTravelMinutes:i.inbound_travel_minutes,congestionRate:i.congestion_rate,congestionLevel:i.congestion_level,imageUrl:null}))}))});
+}
+await router.push('/courses');
+const previewTools=()=>h('aside',{style:'padding:10px 16px;background:#eef6f4;color:#163c45;display:flex;gap:16px;flex-wrap:wrap;font-size:13px'},[
+ h('span','테스트 코스 · 지도/카카오톡은 모의 동작'),
+ h('button',{onClick:()=>router.push('/courses')},'저장 코스 목록'),
+ h('button',{onClick:()=>router.push(`/share/demo-${version}`)},'공유받은 화면'),
+ h('button',{onClick:()=>router.push('/share/revoked')},'만료된 링크 화면'),
+]);
+const pinia=createPinia();const auth=useAuthStore(pinia);auth.user={userId:7,nickname:'테스트 사용자'};auth.ready=true;
+createApp({render:()=>h('div',[preview?previewTools():null,h(Header),h('div',{class:'content-scope'},[h(RouterView)])])}).use(pinia).use(router).mount('#app');
+</script></body></html>

@@ -9,6 +9,7 @@ import com.example.hangat.course.model.CourseDetailResponse;
 import com.example.hangat.course.model.entity.Course;
 import com.example.hangat.course.model.entity.CourseItem;
 import com.example.hangat.course.model.enums.CourseType;
+import com.example.hangat.course.model.enums.CourseStatus;
 import com.example.hangat.course.model.enums.Transport;
 import com.example.hangat.course.repository.CourseItemRepository;
 import com.example.hangat.course.repository.CourseRepository;
@@ -182,6 +183,8 @@ class CourseAccommodationServiceTest {
         entityManager.clear();
 
         CourseDetailResponse detail = queryService.detail(course.getId(), owner.getId());
+        assertThat(detail.status()).isEqualTo(CourseStatus.SAVED);
+        assertThat(detail.manageable()).isTrue();
         assertThat(detail.accommodation()).isNotNull();
         assertThat(detail.accommodation().getSourceCode()).isEqualTo("KAKAO_LOCAL");
         assertThat(detail.accommodation().getSourcePlaceId()).isEqualTo("claim-hotel");

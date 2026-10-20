@@ -1,0 +1,22 @@
+<!doctype html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="app"></div><script type="module">
+import { createApp, h } from 'vue';
+import { createPinia } from 'pinia';
+import { createMemoryHistory, createRouter } from 'vue-router';
+import { useAuthStore } from '/src/stores/auth.js';
+import Header from '/src/components/layout/AppHeader.vue';
+import Editor from '/src/components/mypage/ProfileImageEditor.vue';
+import Avatar from '/src/components/common/ProfileAvatar.vue';
+import '/src/assets/styles/fonts.css';
+import '/src/assets/styles/tokens.css';
+import '/src/assets/styles/base.css';
+import '/src/assets/styles.css';
+const user={userId:7,email:'demo@hangatjeju.com',nickname:'한갓지도 데모계정',demoAccount:true,profileImageUrl:'/users/7/profile-image/d3e00001-2026-4000-8000-000000000001.png'};
+const pinia=createPinia();const auth=useAuthStore(pinia);auth.user=user;auth.ready=true;
+const router=createRouter({history:createMemoryHistory(),routes:[{path:'/:pathMatch(.*)*',component:{template:'<div />'}}]});await router.push('/mypage');
+createApp({render:()=>h('div',[h(Header),h('main',{style:'max-width:640px;margin:40px auto;padding:24px;background:var(--surf);border:1px solid var(--line);border-radius:18px;'},[
+ h('h1',{style:'font-size:23px;margin:0 0 24px'},'한갓지도 데모계정'),
+ h('div',{style:'display:flex;justify-content:center;padding:12px'},[h(Editor)]),
+ h('p',{style:'text-align:center;color:var(--tx2);margin:16px 0 28px'},user.email),
+ h('section',{style:'padding-top:20px;border-top:1px solid var(--line)'},[h('h2',{style:'font-size:14px;margin-bottom:12px'},'리뷰 작성자 표시'),h('div',{style:'display:flex;gap:8px;align-items:center'},[h(Avatar,{src:user.profileImageUrl,nickname:user.nickname}),h('span',user.nickname)])]),
+ h('p',{style:'margin-top:24px;font-size:12px;color:var(--tx2)'},'로컬 화면 확인용 · 운영 계정은 아직 생성하지 않았습니다.')])])}).use(pinia).use(router).mount('#app');
+</script></body></html>

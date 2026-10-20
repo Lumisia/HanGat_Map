@@ -5,6 +5,7 @@ import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
 import io.minio.StatObjectArgs;
+import io.minio.ListObjectsArgs;
 import io.minio.errors.ErrorResponseException;
 import okhttp3.OkHttpClient;
 import org.springframework.http.HttpStatus;
@@ -96,6 +97,29 @@ public final class MinioFileStorage implements FileStorage {
     }
 
     // ────────────────────────── 객체 및 연결 정리 ──────────────────────────
+
+    /** 목록은 지연 순회한다. 권한·통신 오류를 빈 목록으로 숨기지 않는다. */
+    public Iterable<StoredImage> inventory() {
+        return () -> {
+            var objects = client.listObjects(ListObjectsArgs.builder().bucket(bucket).recursive(true).build()).iterator();
+            return new java.util.Iterator<StoredImage>() {
+                public boolean hasNext() { return objects.hasNext(); }
+                public StoredImage next() {
+                    try {
+                        var item = objects.next().get();
+                        return new StoredImage(item.objectName(), item.lastModified().toInstant(), item.etag());
+                    } catch (Exception e) { throw unavailable(); }
+                }
+            };
+        };
+    }
+
+    public StoredImage describe(String key) {
+        try {
+            var stat = client.statObject(StatObjectArgs.builder().bucket(bucket).object(key).build());
+            return new StoredImage(key, stat.lastModified().toInstant(), stat.etag());
+        } catch (Exception e) { throw unavailable(); }
+    }
 
     /** 같은 삭제 요청을 반복할 수 있도록 이미 없는 객체는 성공으로 처리한다. */
     @Override

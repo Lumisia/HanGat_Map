@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { addCalendarDays, formatCalendarDate } from '../../utils/format.js'
 
 const props = defineProps<{
   date?: string
@@ -16,18 +17,13 @@ const root = ref<HTMLElement>()
 const timeTrigger = ref<HTMLButtonElement>()
 const timeOpen = ref(false)
 const dropdownPosition = ref({ top: '0px', left: '0px' })
-const weekdays = ['일', '월', '화', '수', '목', '금', '토']
 
 const tripDates = computed(() => {
   if (!props.minDate || !props.maxDate || props.minDate > props.maxDate) return []
   const dates: Array<{ value: string; label: string }> = []
-  const current = new Date(`${props.minDate}T00:00:00Z`)
-  const end = new Date(`${props.maxDate}T00:00:00Z`)
-  while (current <= end) {
-    const value = current.toISOString().slice(0, 10)
-    const label = `${current.getUTCMonth() + 1}/${current.getUTCDate()} ${weekdays[current.getUTCDay()]}`
+  for (let value = props.minDate; value <= props.maxDate; value = addCalendarDays(value, 1)) {
+    const label = formatCalendarDate(value, { month: 'numeric', day: 'numeric', weekday: 'short' })
     dates.push({ value, label })
-    current.setUTCDate(current.getUTCDate() + 1)
   }
   return dates
 })

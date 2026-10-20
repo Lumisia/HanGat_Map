@@ -1,0 +1,19 @@
+<!doctype html><html lang="ko" data-theme="light"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>없는 페이지 안내 미리보기</title></head><body><div id="app"></div><script type="module">
+import {createApp,h} from 'vue';
+import {createPinia} from 'pinia';
+import {createRouter,createMemoryHistory,RouterView} from 'vue-router';
+import Missing from '/src/views/system/NotFoundView.vue';
+import Share from '/src/views/share/ShareCourseView.vue';
+import Theme from '/src/views/theme/ThemeDetailView.vue';
+import CourseShareService from '/src/services/CourseShareService';
+import '/src/assets/styles/fonts.css';
+import '/src/assets/styles/tokens.css';
+import '/src/assets/styles/base.css';
+import '/src/assets/styles.css';
+const kind=new URLSearchParams(location.search).get('kind')||'404';
+CourseShareService.getPublic=async()=>{throw {status:kind==='error'?503:404}};
+window.fetch=async()=>Response.json({success:true,result:[]});
+const router=createRouter({history:createMemoryHistory(),routes:[{path:'/missing',component:Missing},{path:'/share/:token',component:Share},{path:'/themes/:key',component:Theme},{path:'/:pathMatch(.*)*',component:Missing}]});
+await router.push(kind==='theme'?'/themes/not-a-theme':kind==='404'?'/missing':'/share/missing');
+createApp({render:()=>h(RouterView)}).use(createPinia()).use(router).mount('#app');
+</script></body></html>

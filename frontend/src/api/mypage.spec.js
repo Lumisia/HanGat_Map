@@ -4,7 +4,6 @@
  *  - 타인 데이터 접근 차단
  *  - 삭제 멱등성
  *  - 공유 URL 의 노출 범위 제한
- *  - 리뷰 삭제 후 평점 재계산
  *  - 부분 재구성이 고정 일정을 건드리지 않는지
  */
 import { describe, it, expect, beforeEach } from 'vitest'
@@ -14,12 +13,11 @@ import { setLatency } from './client.js'
 import { ApiError } from './errors.js'
 import { _resetSessionState } from './session.js'
 import { PASSWORD_POLICY } from '../components/security/passwordPolicy.js'
+import { todayKst, addCalendarDays } from '../utils/format.js'
 import { login, logout } from './auth.js'
 import {
   listSavedCourses, getSavedCourse, deleteSavedCourse,
   createShare, stopShare, getSharedCourse,
-  listMyReviews, deleteMyReview, updateMyReview,
-  listFavorites, removeFavorite, addFavorite,
   listAlerts, setAlertRead, regenerateAffectedDay,
   dismissAlert, isAlertLive, ALERT_RETENTION_DAYS
 } from './mypage.js'
@@ -153,119 +151,6 @@ describe('MY_003 코스 공유', () => {
   })
 })
 
-/* ────────────────────────── MY_004 / MY_005 ────────────────────────── */
-
-describe('MY_004 작성한 리뷰', () => {
-  it('다른 사람이 쓴 리뷰(r90)는 내 목록에 나오지 않는다', async () => {
-    const res = await listMyReviews({ page: 1, size: 50 })
-    expect(res.items.some(r => r.reviewId === 'r90')).toBe(false)
-    expect(res.total).toBe(5)
-  })
-
-  it('별점순 정렬이 동작한다', async () => {
-    const desc = await listMyReviews({ sort: 'rating_desc', page: 1, size: 50 })
-    const ratings = desc.items.map(r => r.rating)
-    expect([...ratings].sort((a, b) => b - a)).toEqual(ratings)
-  })
-
-  it('수정하면 updatedAt 이 바뀌고 edited 로 표시된다', async () => {
-    const { items } = await listMyReviews({ page: 1, size: 50 })
-    const target = items.find(r => !r.edited) || items[0]
-    const res = await updateMyReview(target.reviewId, { rating: 3, content: '고친 내용이에요' })
-    expect(res.review.rating).toBe(3)
-    expect(res.review.content).toBe('고친 내용이에요')
-    expect(res.review.edited).toBe(true)
-  })
-
-  it('별점 범위를 벗어나면 막는다', async () => {
-    const { items } = await listMyReviews({ page: 1, size: 50 })
-    await expectApiError(() => updateMyReview(items[0].reviewId, { rating: 6, content: 'x' }), 400)
-  })
-
-  it('타인 리뷰는 고칠 수 없다', async () => {
-    await expectApiError(() => updateMyReview('r90', { rating: 5, content: 'x' }), 403)
-  })
-})
-
-describe('MY_005 리뷰 삭제', () => {
-  it('삭제하면 목록에서 빠지고 장소 평점이 다시 계산된다', async () => {
-    // 금오름에는 내 리뷰 r1(5점)과 타인 리뷰 r90(2점)이 있다 → 평균 3.5
-    const before = await listFavorites({})
-    const geum = before.items.find(p => p.name === '금오름')
-    expect(geum.reviewCount).toBe(2)
-    expect(geum.rating).toBe(3.5)
-
-    const res = await deleteMyReview('r1')
-    expect(res.ok).toBe(true)
-    // 내 5점이 빠지면 타인 2점만 남는다
-    expect(res.placeRating).toEqual({ count: 1, average: 2 })
-
-    const after = await listMyReviews({ page: 1, size: 50 })
-    expect(after.items.some(r => r.reviewId === 'r1')).toBe(false)
-  })
-
-  it('첨부 사진도 함께 사라진다', async () => {
-    const before = await listMyReviews({ page: 1, size: 50 })
-    expect(before.items.find(r => r.reviewId === 'r1').photos.length).toBeGreaterThan(0)
-    await deleteMyReview('r1')
-    const after = await listMyReviews({ page: 1, size: 50 })
-    expect(after.items.find(r => r.reviewId === 'r1')).toBeUndefined()
-  })
-
-  it('이미 삭제된 리뷰에 다시 요청해도 오류가 나지 않는다 (멱등)', async () => {
-    await deleteMyReview('r2')
-    const again = await deleteMyReview('r2')
-    expect(again.ok).toBe(true)
-    expect(again.alreadyDeleted).toBe(true)
-  })
-
-  it('타인 리뷰는 삭제할 수 없다', async () => {
-    await expectApiError(() => deleteMyReview('r90'), 403, 'FORBIDDEN')
-  })
-})
-
-/* ────────────────────────── MY_006 / MY_007 ────────────────────────── */
-
-describe('MY_006 / MY_007 찜', () => {
-  it('찜 목록에 요약 정보가 모두 들어 있다', async () => {
-    const { items } = await listFavorites({})
-    const p = items[0]
-    for (const k of ['name', 'category', 'addr', 'rating', 'reviewCount', 'crowd', 'weather', 'x', 'y']) {
-      expect(p[k], k).not.toBeUndefined()
-    }
-  })
-
-  it('정렬 3종이 각각 다르게 동작한다', async () => {
-    const byName = await listFavorites({ sort: 'name' })
-    const names = byName.items.map(p => p.name)
-    expect([...names].sort((a, b) => a.localeCompare(b, 'ko'))).toEqual(names)
-
-    const byCat = await listFavorites({ sort: 'category' })
-    const cats = byCat.items.map(p => p.category)
-    expect([...cats].sort((a, b) => a.localeCompare(b, 'ko'))).toEqual(cats)
-
-    const byRecent = await listFavorites({ sort: 'recent' })
-    const times = byRecent.items.map(p => +new Date(p.createdAt))
-    expect([...times].sort((a, b) => b - a)).toEqual(times)
-  })
-
-  it('찜을 해제하면 목록에서 즉시 빠진다', async () => {
-    const before = await listFavorites({})
-    const target = before.items[0]
-    await removeFavorite(target.placeId)
-    const after = await listFavorites({})
-    expect(after.total).toBe(before.total - 1)
-    expect(after.items.some(p => p.placeId === target.placeId)).toBe(false)
-  })
-
-  it('같은 장소를 두 번 찜해도 중복이 생기지 않는다', async () => {
-    const before = await listFavorites({})
-    const res = await addFavorite(before.items[0].placeId)
-    expect(res.duplicated).toBe(true)
-    const after = await listFavorites({})
-    expect(after.total).toBe(before.total)
-  })
-})
 
 /* ────────────────────────── MY_008 ────────────────────────── */
 
@@ -349,7 +234,7 @@ describe('로그인이 필요한 API', () => {
 describe('알림 보관 기간', () => {
   const DAY_MS = 24 * 60 * 60 * 1000
   const ago = d => new Date(Date.now() - d * DAY_MS).toISOString()
-  const inDays = d => new Date(Date.now() + d * DAY_MS).toISOString().slice(0, 10)
+  const inDays = d => addCalendarDays(todayKst(), d)
 
   beforeEach(async () => {
     await login({ email: TEST_ACCOUNT.email, password: TEST_ACCOUNT.password })

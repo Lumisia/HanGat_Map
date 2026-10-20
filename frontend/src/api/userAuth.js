@@ -6,6 +6,8 @@ import {
   reissueAccessToken,
   syncAuthenticatedUser
 } from './backendClient.js'
+import { ApiError } from './errors.js'
+import { publicProfileImageUrl } from '../utils/profileImage.js'
 
 /** 백엔드 UserResponse를 기존 화면이 읽는 최소 사용자 모델로 맞춘다. */
 export function normalizeUser (user) {
@@ -18,13 +20,19 @@ export function normalizeUser (user) {
     status: user.status,
     statusCode: user.status,
     emailVerified: !!user.emailVerified,
+    demoAccount: user.demoAccount === true,
     lastLoginAt: user.lastLoginAt ?? null,
-    createdAt: user.createdAt ?? null
+    createdAt: user.createdAt ?? null,
+    profileImageUrl: user.profileImageUrl ?? null
   }
 }
 
 function normalizeLogin (loginResponse) {
   if (!loginResponse) return null
+  if (loginResponse.recoveryRequired === true) {
+    clearBackendSession()
+    return { recoveryRequired: true }
+  }
   const normalized = {
     ...loginResponse,
     user: normalizeUser(loginResponse.user)
@@ -51,6 +59,10 @@ export async function login ({ email, password }) {
   return normalizeLogin(result)
 }
 
+export async function loginDemo () {
+  return normalizeLogin(await apiRequest('/auth/demo-login', { method: 'POST' }))
+}
+
 export async function restoreSession () {
   await reissueAccessToken()
   const user = normalizeUser(await apiRequest('/users/me', {
@@ -67,6 +79,27 @@ export async function logout () {
   } finally {
     clearBackendSession()
   }
+}
+
+export async function withdrawAccount (email) {
+  const result = await apiRequest('/users/me/withdrawal', {
+    method: 'POST', body: { email }, auth: true, sessionBound: true, retryAuth: false
+  })
+  clearBackendSession()
+  return result
+}
+
+// 복구 확인은 HttpOnly 쿠키로만 인증한다. 이메일/토큰을 URL이나 로컬 저장소에 두지 않는다.
+export function getWithdrawalContext () {
+  return apiRequest('/auth/withdrawal')
+}
+
+export function cancelWithdrawal () {
+  return apiRequest('/auth/withdrawal/cancel', { method: 'POST' })
+}
+
+export function declineWithdrawalRecovery () {
+  return apiRequest('/auth/withdrawal/decline', { method: 'POST' })
 }
 
 // ────────────────────────── 이메일 인증 ──────────────────────────
@@ -112,6 +145,24 @@ export async function resetPassword ({ ticket, password, passwordConfirm }) {
 
 // ────────────────────────── 내 정보 ──────────────────────────
 
+/** 파일 원문만 백엔드에 전달한다. MinIO 자격 증명은 프론트에 두지 않는다. */
+export async function updateProfileImage (file) {
+  const body = new FormData()
+  body.append('file', file)
+  return normalizeUser(await apiRequest('/users/me/profile-image', {
+    method: 'PUT', body, auth: true, sessionBound: true
+  }))
+}
+
+/** 공개 사진에는 인증을 붙이지 않는다. 이전 본인 전용 경로는 인증된 Blob 조회로 호환한다. */
+export function readProfileImage (path) {
+  if (publicProfileImageUrl(path)) return apiRequest(path, { responseType: 'blob' })
+  if (!/^\/users\/me\/profile-image\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png|webp)$/.test(path)) {
+    throw new ApiError(400, 'INVALID_IMAGE_PATH', '사진 주소를 확인해주세요.')
+  }
+  return apiRequest(path, { auth: true, responseType: 'blob', sessionBound: true })
+}
+
 export async function me () {
   const user = normalizeUser(await apiRequest('/users/me', { auth: true }))
   syncAuthenticatedUser(user)
@@ -127,6 +178,7 @@ export async function updateNickname (nickname) {
   const user = normalizeUser(await apiRequest('/users/me/nickname', {
     method: 'PATCH',
     auth: true,
+    sessionBound: true,
     body: { nickname }
   }))
   syncAuthenticatedUser(user)
@@ -137,6 +189,7 @@ export async function updateBirthDate (birthDate) {
   const user = normalizeUser(await apiRequest('/users/me/birth-date', {
     method: 'PATCH',
     auth: true,
+    sessionBound: true,
     body: { birthDate: birthDate || null }
   }))
   syncAuthenticatedUser(user)

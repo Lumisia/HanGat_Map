@@ -70,6 +70,30 @@ rules:
       - patch
       - delete
 
+  # Helm으로 한갓 CronJob을 배포한다. 다른 네임스페이스 권한은 부여하지 않는다.
+  - apiGroups:
+      - batch
+    resources:
+      - cronjobs
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+
+  # 실행된 Job의 상태는 조회만 한다. 실제 예약 실행은 Kubernetes 컨트롤러가 담당한다.
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+
   # 한갓 도메인 Ingress
   - apiGroups:
       - networking.k8s.io

@@ -122,16 +122,19 @@ public class GeminiCourseAiProvider implements CourseAiProvider {
             CourseAiValidationCode validationCode,
             String validationMessage
     ) {
-        validateConfiguration();
-        GeminiCallPhase phase = GeminiCallPhase.BUILD_REQUEST;
+        GeminiCallPhase phase = GeminiCallPhase.CONFIGURATION;
+        CallMetrics metrics = new CallMetrics();
 
         try {
+            validateConfiguration();
+            phase = GeminiCallPhase.BUILD_REQUEST;
             GeminiGenerateRequest request = validationCode == null
                     ? buildRequest(input)
                     : buildCorrectionRequest(
                             input, previousResult, validationCode, validationMessage);
             phase = GeminiCallPhase.HTTP_EXCHANGE;
-            ResponseEntity<String> httpResponse = executeWithRetry(request);
+            ResponseEntity<String> httpResponse = executeWithRetry(request, metrics);
+            metrics.httpStatus = httpResponse.getStatusCode().value();
 
             phase = GeminiCallPhase.PARSE_ENVELOPE;
             GeminiResponseMetadata metadata = responseMetadata(httpResponse);
@@ -139,26 +142,28 @@ public class GeminiCourseAiProvider implements CourseAiProvider {
             phase = GeminiCallPhase.PARSE_RESULT;
             return parseResult(response);
         } catch (CourseAiException exception) {
-            throw exception;
+            throw exception.withDiagnostic(diagnostic(exception.getFailureType(), phase, metrics, null, null)
+                    .withValidationCode(exception instanceof CourseAiValidationException validation ? validation.getCode() : null));
         } catch (RestClientResponseException exception) {
             ProviderErrorDetails details = providerErrorDetails(exception.getResponseBodyAsString());
+            metrics.httpStatus = exception.getStatusCode().value();
             if (exception.getStatusCode().value() == 429) {
                 throw new CourseAiException(
                         CourseAiFailureType.RATE_LIMIT,
                         "Gemini API 요청 한도를 초과했습니다. PHASE=" + phase + ", "
                                 + diagnosticContext(exception.getStatusCode(), details)
-                );
+                ).withDiagnostic(diagnostic(CourseAiFailureType.RATE_LIMIT, phase, metrics, details, null));
             }
             if (retryPolicy.isRetryableStatus(exception.getStatusCode().value())) {
                 throw new CourseAiException(
                         CourseAiFailureType.TEMPORARILY_UNAVAILABLE,
                         providerErrorMessage(exception.getStatusCode(), details, phase)
-                );
+                ).withDiagnostic(diagnostic(CourseAiFailureType.TEMPORARILY_UNAVAILABLE, phase, metrics, details, null));
             }
             throw new CourseAiException(
                     CourseAiFailureType.PROVIDER_ERROR,
                     providerErrorMessage(exception.getStatusCode(), details, phase)
-            );
+            ).withDiagnostic(diagnostic(CourseAiFailureType.PROVIDER_ERROR, phase, metrics, details, null));
         } catch (ResourceAccessException exception) {
             String failureType = networkFailureType(exception);
             throw new CourseAiException(
@@ -168,9 +173,10 @@ public class GeminiCourseAiProvider implements CourseAiProvider {
                     "Gemini API 통신에 실패했습니다. PHASE=" + phase
                             + ", NETWORK=" + failureType
                             + ", HOST=" + endpointHost()
-                            + ", MODEL=" + safeToken(properties.model()),
-                    exception
-            );
+                            + ", MODEL=" + safeToken(properties.model())
+            ).withDiagnostic(diagnostic(retryPolicy.isRetryableNetworkFailure(failureType)
+                    ? CourseAiFailureType.TEMPORARILY_UNAVAILABLE : CourseAiFailureType.PROVIDER_ERROR,
+                    phase, metrics, null, failureType));
         } catch (Exception exception) {
             throw new CourseAiException(
                     CourseAiFailureType.PROVIDER_ERROR,
@@ -179,16 +185,32 @@ public class GeminiCourseAiProvider implements CourseAiProvider {
                             + ", " + exceptionTypeDiagnostics(exception)
                             + ", HOST=" + endpointHost()
                             + ", MODEL=" + safeToken(properties.model())
-            );
+            ).withDiagnostic(diagnostic(CourseAiFailureType.PROVIDER_ERROR,
+                    diagnosticPhase(phase, exception), metrics, null, null));
         }
     }
 
-    private ResponseEntity<String> executeWithRetry(GeminiGenerateRequest request) {
+    private CourseAiDiagnostic diagnostic(CourseAiFailureType type, GeminiCallPhase phase,
+                                          CallMetrics metrics, ProviderErrorDetails details, String network) {
+        return new CourseAiDiagnostic(type, CourseAiDiagnostic.Phase.valueOf(phase.name()),
+                metrics.httpStatus, details == null ? null : details.status(),
+                details == null ? null : details.reason(), network, properties.model(),
+                metrics.attempts, (System.nanoTime() - metrics.startedAt) / 1_000_000);
+    }
+
+    private static final class CallMetrics {
+        final long startedAt = System.nanoTime();
+        int attempts;
+        Integer httpStatus;
+    }
+
+    private ResponseEntity<String> executeWithRetry(GeminiGenerateRequest request, CallMetrics metrics) {
         int attempt = 1;
         boolean readTimeoutOccurred = false;
         long startedAt = System.nanoTime();
 
         while (true) {
+            metrics.attempts = attempt;
             try {
                 return restClient.post()
                         .uri("/models/{model}:generateContent", properties.model())
@@ -234,8 +256,7 @@ public class GeminiCourseAiProvider implements CourseAiProvider {
             throw new CourseAiException(
                     CourseAiFailureType.PROVIDER_ERROR,
                     "Gemini API 재시도가 중단되었습니다. HOST=" + endpointHost()
-                            + ", MODEL=" + safeToken(properties.model()),
-                    exception);
+                            + ", MODEL=" + safeToken(properties.model()));
         }
     }
 
@@ -250,7 +271,7 @@ public class GeminiCourseAiProvider implements CourseAiProvider {
         log.warn(
                 "Gemini transient failure; model={}, attempt={}/{}, status={}, "
                         + "exception={}, elapsedMs={}, retryDelayMs={}",
-                safeToken(properties.model()), failedAttempt,
+                CourseAiDiagnostic.safeModel(properties.model()), failedAttempt,
                 "READ_TIMEOUT".equals(exceptionType)
                         ? GeminiRetryPolicy.MAX_READ_TIMEOUT_ATTEMPTS
                         : GeminiRetryPolicy.MAX_ATTEMPTS,
@@ -297,8 +318,7 @@ public class GeminiCourseAiProvider implements CourseAiProvider {
         } catch (JsonProcessingException exception) {
             throw new CourseAiException(
                     CourseAiFailureType.INVALID_RESPONSE,
-                    "Gemini 응답을 AI 코스 결과로 변환할 수 없습니다.",
-                    exception
+                    "Gemini 응답을 AI 코스 결과로 변환할 수 없습니다."
             );
         }
     }
@@ -502,12 +522,12 @@ public class GeminiCourseAiProvider implements CourseAiProvider {
                 return ProviderErrorDetails.empty();
             }
             JsonNode error = root.path("error");
-            String status = safeToken(error.path("status").asText(null));
+            String status = CourseAiDiagnostic.googleStatus(error.path("status").asText(null));
             String reason = null;
             JsonNode details = error.path("details");
             if (details.isArray()) {
                 for (JsonNode detail : details) {
-                    String candidate = safeToken(detail.path("reason").asText(null));
+                    String candidate = CourseAiDiagnostic.googleReason(detail.path("reason").asText(null));
                     if (candidate != null) {
                         reason = candidate;
                         break;
@@ -786,6 +806,7 @@ public class GeminiCourseAiProvider implements CourseAiProvider {
     }
 
     private enum GeminiCallPhase {
+        CONFIGURATION,
         BUILD_REQUEST,
         REQUEST_SERIALIZATION,
         HTTP_EXCHANGE,

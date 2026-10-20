@@ -1,58 +1,55 @@
 <script setup>
-/**
- * 마이페이지 셸.
- *
- * Stitch 시안 구성:
- *   ① 프로필 히어로 — 큰 둥근 카드(rounded-[2rem]), 배경에 유기적인 형태 두 개,
- *      그라데이션 링을 두른 아바타, 인사말, 지표 두 개
- *   ② 아래 2단 — 왼쪽 세로 알약 탭(아이콘 + 알림 점), 오른쪽 내용
- *   좁은 화면에서는 탭이 가로 스크롤로 눕는다(시안 `flex md:flex-col`).
- *
- * 지표는 **실제 개수**를 API 에서 읽는다. 시안의 5·12 는 목업 숫자라 쓰지 않았다.
- */
-import { onMounted, ref, watch } from 'vue'
+/** 마이페이지: 왼쪽 프로필·메뉴, 오른쪽 활동 콘텐츠. 기존 API와 계정 보호 유지. */
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '../../stores/auth.js'
 import { useUiStore } from '../../stores/ui.js'
-import { listAlerts, listSavedCourses, listMyReviews } from '../../api/mypage.js'
+import CourseService from '../../services/CourseService'
+import { useNotificationStore } from '../../stores/notifications.js'
+import { listMyReviews } from '../../api/myActivity.js'
+import { countFavorites } from '../../api/favorites.js'
+import { getBackendSessionVersion } from '../../api/backendClient.js'
 import AppIcon from '../../components/common/AppIcon.vue'
+import ProfileImageEditor from '../../components/mypage/ProfileImageEditor.vue'
 
 const auth = useAuthStore()
 const ui = useUiStore()
 const route = useRoute()
 
-const unread = ref(0)
+const notifications = useNotificationStore()
+const unread = computed(() => notifications.unread)
 const courseCount = ref(null)
 const reviewCount = ref(null)
-
-async function loadUnread () {
-  try {
-    unread.value = (await listAlerts({ onlyUnread: true })).unread
-  } catch {
-    unread.value = 0
-  }
-}
+const favoriteCount = ref(null)
+let statsVersion = 0
+onBeforeUnmount(() => { statsVersion += 1 })
 
 async function loadStats () {
-  // 개수만 필요하므로 size 를 1 로 두고 total 만 읽는다
-  const [c, r] = await Promise.allSettled([
-    listSavedCourses({ size: 1 }),
-    listMyReviews({ size: 1 })
+  const version = ++statsVersion
+  const epoch = getBackendSessionVersion()
+  // 개수만 필요하므로 첫 페이지의 항목 하나만 요청한다.
+  const [c, r, f] = await Promise.allSettled([
+    CourseService.getSavedCourses(0, 1),
+    listMyReviews({ size: 1 }),
+    countFavorites()
   ])
-  courseCount.value = c.status === 'fulfilled' ? c.value.total : null
-  reviewCount.value = r.status === 'fulfilled' ? r.value.total : null
+  if (version !== statsVersion || epoch !== getBackendSessionVersion()) return
+  courseCount.value = c.status === 'fulfilled' && c.value.ok ? c.value.totalElements : null
+  reviewCount.value = r.status === 'fulfilled' ? r.value.totalElements : null
+  favoriteCount.value = f.status === 'fulfilled' ? f.value : null
 }
 
-onMounted(() => { loadUnread(); loadStats() })
-watch(() => [route.fullPath, ui.alertsVersion], () => { loadUnread(); loadStats() })
+onMounted(loadStats)
+watch(() => [route.fullPath, ui.alertsVersion], loadStats)
+watch(() => auth.user?.userId, () => {
+  statsVersion += 1
+  reviewCount.value = null
+  favoriteCount.value = null
+  courseCount.value = null
+  if (auth.user) loadStats()
+}, { flush: 'sync' })
 
-/*
-  ⚠️ 2026-08-15 — '저장한 코스' 탭을 뺐다.
-     라우트(`/mypage/courses`, `/mypage/courses/:courseId`)와 화면은 **그대로 남겨 뒀다.**
-     주소를 직접 치면 열리고, 되살릴 때 이 배열에 한 줄 넣으면 끝이다.
-     다만 화면에서 닿을 길이 없어져 MY_001~MY_003(코스 목록·상세·공유)의
-     진입점이 사라진 상태라는 걸 적어 둔다.
-*/
+
 const TABS = [
   { name: 'my-reviews', label: '작성한 리뷰', icon: 'album', match: p => p === '/mypage/reviews' },
   { name: 'my-favorites', label: '찜한 장소', icon: 'bookmark', match: p => p === '/mypage/favorites' },
@@ -62,187 +59,109 @@ const TABS = [
 </script>
 
 <template>
-  <main class="doc">
-    <div class="doc-in">
-      <!-- ① 프로필 히어로 -->
-      <section class="hero">
-        <span class="blob b1" aria-hidden="true" />
-        <span class="blob b2" aria-hidden="true" />
-
-        <div class="hero-in">
-          <div class="avwrap">
-            <span class="avring">
-              <span class="av">{{ auth.initial }}</span>
-            </span>
-          </div>
-
-          <div class="hero-txt">
-            <h1>{{ auth.displayName }}님, 이번엔 어디로 떠나볼까요?</h1>
-            <p class="sub">제주에서 가장 한갓진 시간대를 모아 뒀어요.</p>
-
-            <div class="stats">
-              <span class="tagline">
-                <AppIcon name="flower" :size="16" fill />
-                조용한 여행자
-              </span>
-
-              <span class="stat">
-                <em class="lbl">저장한 코스</em>
-                <b class="tnum">{{ courseCount ?? '–' }}<i>개</i></b>
-              </span>
-
-              <span class="stat">
-                <em class="lbl">작성한 리뷰</em>
-                <b class="tnum">{{ reviewCount ?? '–' }}<i>개</i></b>
-              </span>
+  <main class="doc mypage">
+    <div class="doc-in cols">
+      <aside class="side">
+        <section class="hero" aria-label="내 프로필">
+          <div class="profile-top">
+            <ProfileImageEditor />
+            <div class="profile-intro">
+              <h1>{{ auth.displayName }}</h1>
+              <p class="sub">나의 제주 여행과 소중한 기록을 모아 보세요.</p>
             </div>
           </div>
-        </div>
-      </section>
-
-      <!-- ② 2단: 탭 + 내용 -->
-      <div class="cols">
-        <aside class="side">
-          <nav class="tabs thin" aria-label="마이페이지 메뉴">
-            <RouterLink
-              v-for="t in TABS"
-              :key="t.name"
-              :to="{ name: t.name }"
-              class="mtab"
-              :class="{ on: t.match(route.path) }"
-            >
-              <AppIcon :name="t.icon" :size="20" />
-              <span class="txt">{{ t.label }}</span>
-              <span v-if="t.dot && unread" class="dot" :aria-label="`읽지 않은 알림 ${unread}건`" />
-            </RouterLink>
-          </nav>
-        </aside>
-
-        <div class="body">
-          <RouterView />
-        </div>
-      </div>
-
-      <p class="foot note">
-        혼잡 · 날씨 · 주소는 <b>샘플 예보</b>라 실제와 다를 수 있어요.
-        실서비스는 한국관광공사 · 행정안전부 · 기상청 자료를 씁니다.
-      </p>
+          <div class="stats">
+            <span class="stat"><span class="lbl">저장한 코스</span><b>{{ courseCount ?? '–' }}<small>개</small></b></span>
+            <span class="stat"><span class="lbl">작성한 리뷰</span><b>{{ reviewCount ?? '–' }}<small>개</small></b></span>
+            <span class="stat"><span class="lbl">새 알림</span><b class="unread-count">{{ unread }}<small>건</small></b></span>
+          </div>
+        </section>
+        <nav class="tabs thin" aria-label="마이페이지 메뉴">
+          <RouterLink v-for="t in TABS" :key="t.name" :to="{ name: t.name }"
+            class="mtab" :class="{ on: t.match(route.path) }">
+            <AppIcon :name="t.icon" :size="19" />
+            <span class="txt">{{ t.label }}</span>
+            <span v-if="t.name === 'my-reviews' && reviewCount != null" class="nav-count">{{ reviewCount }}</span>
+            <span v-if="t.name === 'my-favorites' && favoriteCount != null" class="nav-count">{{ favoriteCount }}</span>
+            <span v-if="t.dot && unread" class="nav-count new" :aria-label="`읽지 않은 알림 ${unread}건`">{{ unread }} 신규</span>
+          </RouterLink>
+        </nav>
+      </aside>
+      <div class="body"><RouterView @reviews-changed="loadStats" @favorites-changed="loadStats" /></div>
     </div>
   </main>
 </template>
 
 <style scoped>
-/* ── ① 히어로 ── */
-.hero {
-  position: relative;
-  background: var(--surf);
-  border: 1px solid var(--line);
-  border-radius: var(--r-2xl);
-  padding: var(--sp-xl);
-  margin-bottom: var(--sp-xl);
-  overflow: hidden;
-  box-shadow: var(--sh-soft);
+.mypage {
+  --mp-bg: #f8fafc; --surf: #fff; --surf2: #f8fafc; --line: #e2e8f0;
+  --tx: #0f172a; --tx2: #52627a; --tx3: #64748b;
+  --ac: #246b45; --ac-dk: #1a5234; --ac-bg: #eff9f3;
+  --mp-shadow: 0 1px 3px #0f172a08, 0 6px 20px #0f172a03;
+  background: var(--mp-bg); color: var(--tx); padding: 40px 32px 80px;
+  min-height: calc(100vh - 80px);
 }
-
-/*
-  시안의 `organic-shape` — 반지름을 네 모서리마다 다르게 준 비대칭 원.
-  장식이라 aria-hidden 이고, 내용 위로 올라오지 않게 z-index 를 낮춘다.
-*/
-.blob { position: absolute; display: block; pointer-events: none; }
-.b1 {
-  top: -80px; right: -60px; width: 280px; height: 280px;
-  background: var(--ac-bg);
-  border-radius: 62% 38% 46% 54% / 54% 47% 53% 46%;
-  opacity: .8;
+.cols { max-width: 1280px; display: grid; grid-template-columns: minmax(280px, 384px) minmax(0, 1fr); gap: 32px; align-items: start; }
+.side, .body { min-width: 0; }
+.side { display: grid; gap: 20px; }
+.hero, .tabs { background: var(--surf); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--mp-shadow); }
+.hero { padding: 24px; }
+.profile-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+.profile-top :deep(.profile-photo) { width: 100px; }
+.profile-top :deep(.photo-ring) { width: 80px; height: 80px; border-radius: 18px; padding: 3px; background: var(--surf2); border: 1px solid var(--line); }
+.profile-top :deep(.avatar) { border-radius: 14px; }
+.profile-top :deep(.photo-note) { font-size: 10px; }
+.profile-top :deep(.photo-button) { font-size: 11px; padding: 5px 10px; min-height: 32px; }
+.profile-intro { flex: 1; min-width: 0; padding-top: 8px; }
+.profile-top :deep(.profile-photo) { flex-shrink: 0; }
+h1 { font-size: 20px; font-weight: 800; letter-spacing: -.03em; overflow-wrap: anywhere; margin: 0 0 8px; }
+.sub { color: var(--tx2); font-size: 13px; line-height: 1.7; margin: 0; }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); background: var(--surf2); border: 1px solid var(--line); border-radius: 12px; padding: 14px 0; }
+.stat { display: grid; gap: 5px; text-align: center; font-variant-numeric: tabular-nums; }
+.stat + .stat { border-left: 1px solid var(--line); }
+.lbl { font-size: 11px; color: var(--tx2); }
+.stat b { font-size: 15px; }
+.stat small { font-size: 11px; font-weight: 400; margin-left: 3px; }
+.stat .unread-count { color: var(--ac); }
+.tabs { display: flex; flex-direction: column; gap: 4px; padding: 8px; }
+.mtab { display: flex; align-items: center; gap: 12px; padding: 12px 16px; min-height: 46px; color: var(--tx2); border: 1px solid transparent; border-radius: 11px; font-size: 14px; font-weight: 600; }
+.mtab:hover { background: var(--surf2); }
+.mtab.on { background: var(--ac-bg); border-color: #b9e8cd; color: var(--ac-dk); }
+.mtab:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+.txt { flex: 1; white-space: nowrap; }
+.nav-count { background: var(--surf2); border-radius: 99px; padding: 2px 7px; font-size: 11px; font-variant-numeric: tabular-nums; }
+.on .nav-count { background: #cef1de; color: #1a5234; }
+.nav-count.new { color: var(--busy); background: var(--busy-bg); }
+.body :deep(.bar-top), .body :deep(.blk), .body :deep(.inbox-header) { padding: 24px; background: var(--surf); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--mp-shadow); margin-bottom: 24px; }
+.body :deep(.sect) { font-size: 19px; letter-spacing: -.025em; }
+.body :deep(.sect)::after { display: none; }
+.body :deep(.cnt) { display: inline-block; color: var(--ac); background: var(--ac-bg); border: 1px solid #b9e8cd; border-radius: 99px; padding: 2px 8px; font-size: 12px; vertical-align: middle; }
+.body :deep(.card) { border-radius: 16px; border-color: var(--line); box-shadow: var(--mp-shadow); }
+.body :deep(.wrap) { max-width: none; }
+.body :deep(.defs dd) { min-width: 0; overflow-wrap: anywhere; }
+.body :deep(.cards) { gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); }
+.body :deep(.cards .card) { padding: 12px; }
+.body :deep(.th) { height: 156px !important; }
+.body :deep(.inbox-list li) { background: var(--surf); border-radius: 14px; }
+:global(html[data-theme="dark"] .mypage) { --mp-bg: #1e292f; --surf: #29383f; --surf2: #243139; --line: #42535e; --tx: #edf3f7; --tx2: #c0ced9; --tx3: #a3b5c3; --ac: #91d7b0; --ac-dk: #b5e6c9; --ac-bg: #213f32; }
+@media (prefers-color-scheme: dark) {
+  :global(html:not([data-theme="light"]) .mypage) { --mp-bg: #1e292f; --surf: #29383f; --surf2: #243139; --line: #42535e; --tx: #edf3f7; --tx2: #c0ced9; --tx3: #a3b5c3; --ac: #91d7b0; --ac-dk: #b5e6c9; --ac-bg: #213f32; }
 }
-.b2 {
-  bottom: -110px; left: -70px; width: 300px; height: 300px;
-  background: var(--sky);
-  border-radius: 41% 59% 62% 38% / 47% 40% 60% 53%;
-  opacity: .55;
+@media (max-width: 1023px) {
+  .mypage { padding: 24px 20px 48px; }
+  .cols { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .side { gap: 16px; }
+  .tabs { flex-direction: row; overflow-x: auto; }
+  .mtab { flex-shrink: 0; padding: 10px 12px; gap: 7px; }
+  .hero { padding: 20px; }
+  .profile-top { margin-bottom: 12px; }
 }
-
-.hero-in {
-  position: relative; z-index: 1;
-  display: flex; align-items: flex-start; gap: var(--sp-lg);
-}
-
-/* 시안: `p-1 bg-gradient-to-tr from-primary to-primary-container` 링 */
-.avring {
-  display: block; width: 128px; height: 128px; border-radius: 50%; padding: 4px;
-  background: linear-gradient(to top right, var(--ac), var(--ac-soft));
-}
-.av {
-  width: 100%; height: 100%; border-radius: 50%;
-  border: 4px solid var(--surf);
-  background: var(--ac-bg); color: var(--ac-dk);
-  font-family: var(--font-head); font-size: 40px; font-weight: 900;
-  display: flex; align-items: center; justify-content: center;
-}
-
-.hero-txt { flex: 1; min-width: 0; padding-top: 6px; }
-h1 { font-size: 28px; letter-spacing: -.03em; margin-bottom: 8px; }
-.sub { font-size: 15px; color: var(--tx2); margin-bottom: var(--sp-md); }
-
-.stats { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-md); }
-.tagline {
-  display: inline-flex; align-items: center; gap: 6px;
-  background: var(--ac-bg); color: var(--ac-dk);
-  font-family: var(--font-head); font-size: 13px; font-weight: 700;
-  padding: 8px 16px; border-radius: var(--r-xl);
-}
-.stat {
-  display: flex; flex-direction: column; gap: 2px;
-  padding-left: var(--sp-md); border-left: 1px solid var(--line);
-}
-.stat .lbl { font-style: normal; font-size: 11px; letter-spacing: .1em; }
-.stat b {
-  font-family: var(--font-head); font-size: 22px; font-weight: 800; color: var(--ac);
-}
-.stat b i { font-style: normal; font-size: 13px; font-weight: 400; color: var(--tx2); margin-left: 3px; }
-
-/* ── ② 2단 ── */
-.cols { display: flex; gap: var(--gutter); align-items: flex-start; }
-.side { width: 240px; flex-shrink: 0; }
-.body { flex: 1; min-width: 0; }
-
-.tabs { display: flex; flex-direction: column; gap: 8px; }
-.mtab {
-  display: flex; align-items: center; gap: 12px;
-  padding: 14px 20px; border-radius: var(--r-xl);
-  border: 1px solid transparent;
-  font-family: var(--font-head); font-size: 14px; font-weight: 700;
-  color: var(--tx2);
-  transition: background .2s, color .2s, border-color .2s;
-}
-.mtab:hover { background: var(--surf); color: var(--tx); border-color: var(--line); }
-.mtab.on {
-  background: var(--surf); color: var(--ac);
-  border-color: var(--line); box-shadow: var(--sh);
-}
-.mtab .txt { flex: 1; min-width: 0; }
-/* 시안: 알림 탭 오른쪽 끝의 작은 점 (숫자 대신) */
-.dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--mid-st); flex-shrink: 0;
-}
-
-.foot { margin-top: var(--sp-xl); padding-top: var(--sp-md); border-top: 1px solid var(--line); }
-.foot b { color: var(--tx2); font-weight: 700; }
-
-/* ── 좁은 화면: 시안의 `flex md:flex-col` — 탭이 가로로 눕는다 ── */
-@media (max-width: 900px) {
-  .hero { padding: var(--sp-lg); border-radius: var(--r-xl); }
-  .hero-in { flex-direction: column; align-items: center; text-align: center; }
-  .avring { width: 96px; height: 96px; }
-  .av { font-size: 30px; }
-  .hero-txt { padding-top: 0; }
-  h1 { font-size: 22px; }
-  .stats { justify-content: center; }
-
-  .cols { flex-direction: column; }
-  .side { width: 100%; }
-  .tabs { flex-direction: row; overflow-x: auto; padding-bottom: 4px; }
-  .mtab { flex-shrink: 0; padding: 12px 16px; }
+@media (max-width: 480px) {
+  .mypage { padding: 20px 16px calc(80px + env(safe-area-inset-bottom, 0px)); }
+  .cols { gap: 20px; }
+  .hero { padding: 20px; }
+  .profile-top :deep(.profile-photo) { width: 80px; }
+  .body :deep(.bar-top), .body :deep(.blk), .body :deep(.inbox-header) { padding: 18px; margin-bottom: 16px; }
+  .body :deep(.sect) { font-size: 18px; }
 }
 </style>

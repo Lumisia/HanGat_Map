@@ -33,6 +33,37 @@ import java.util.Set;
 @Service
 @Transactional(readOnly = true)
 public class AlternativeService {
+    public enum Sort { CONGESTION, DISTANCE }
+    @com.fasterxml.jackson.databind.annotation.JsonNaming(com.fasterxml.jackson.databind.PropertyNamingStrategies.SnakeCaseStrategy.class)
+    public record StraightResponse(LocalDate forecastDate, String distanceBasis, List<AlternativePlaceResponse> places) {}
+
+    public StraightResponse straightAlternatives(Long placeId, Set<Long> excludeIds) {
+        LocalDate today = com.example.hangat.common.util.DateTimes.todayKst();
+        return new StraightResponse(today, "STRAIGHT_LINE",
+                alternatives(placeId, today, excludeIds, Integer.MAX_VALUE, Sort.DISTANCE));
+    }
+
+    public record RoadCandidate(AlternativePlaceResponse place, com.example.hangat.course.route.AlternativeRoadDistance.Point point) {}
+    public record RoadInput(LocalDate date, com.example.hangat.course.route.AlternativeRoadDistance.Point origin, List<RoadCandidate> candidates) {}
+
+    /** Materialize DB fields before outbound requests; do not hold a DB transaction during routing. */
+    public RoadInput roadInput(Long placeId) {
+        LocalDate today = com.example.hangat.common.util.DateTimes.todayKst();
+        Place origin = placeRepository.findById(placeId)
+                .orElseThrow(() -> new BaseException(BaseResponseStatus.PLACE_NOT_FOUND, placeId));
+        var responses = alternatives(placeId, today, Set.of(), Integer.MAX_VALUE, Sort.DISTANCE);
+        var coordinates = placeRepository.findAllById(responses.stream().map(AlternativePlaceResponse::placeId).toList())
+                .stream().collect(java.util.stream.Collectors.toMap(Place::getId, this::point));
+        return new RoadInput(today, point(origin), responses.stream()
+                .map(p -> new RoadCandidate(p, coordinates.get(p.placeId()))).toList());
+    }
+
+    private com.example.hangat.course.route.AlternativeRoadDistance.Point point(Place place) {
+        if (place.getLatitude() == null || place.getLongitude() == null)
+            throw new com.example.hangat.course.route.CourseCarRouteException("Missing place coordinates.");
+        return new com.example.hangat.course.route.AlternativeRoadDistance.Point(place.getId(),
+                place.getLatitude().doubleValue(), place.getLongitude().doubleValue());
+    }
 
     /** 1차 탐색 반경(km) - 이 안에서 먼저 채운다. */
     private static final int NEAR_RADIUS_KM = 10;
@@ -53,6 +84,11 @@ public class AlternativeService {
 
     public List<AlternativePlaceResponse> alternatives(Long placeId, LocalDate date,
                                                        Set<Long> excludeIds, int limit) {
+        return alternatives(placeId, date, excludeIds, limit, Sort.CONGESTION);
+    }
+
+    public List<AlternativePlaceResponse> alternatives(Long placeId, LocalDate date,
+                                                       Set<Long> excludeIds, int limit, Sort sort) {
         Place base = placeRepository.findById(placeId)
                 .orElseThrow(() -> new BaseException(BaseResponseStatus.PLACE_NOT_FOUND, placeId));
 
@@ -84,7 +120,10 @@ public class AlternativeService {
                         base.getLatitude(), base.getLongitude(),
                         place.getLatitude(), place.getLongitude())))
                 .filter(c -> c.distanceKm() <= FAR_RADIUS_KM)
-                .sorted(Comparator.comparingDouble(Candidate::rate))
+                .sorted((sort == Sort.DISTANCE
+                        ? Comparator.comparingDouble(Candidate::distanceKm)
+                        : Comparator.comparingDouble(Candidate::rate))
+                        .thenComparing(c -> c.place().getId()))
                 .toList();
 
         // 10km 안을 먼저 채우고, 모자란 자리만 20km에서 보충한다
@@ -113,11 +152,11 @@ public class AlternativeService {
                 replacementReason(base, baseRate, rate, distanceKm));
     }
 
-    /** 이 장소가 어떤 곳인지 - MainService와 같은 우선순위 (검증가 > 숨은 명소 > 예보 여유) */
+    /** 이 장소가 어떤 곳인지 - MainService와 같은 우선순위 (검증가 > 숨은 명소 > 예보 한산) */
     private String recommendationReason(Place place, CongestionLevel level) {
         if (place.isGoodPrice()) return "착한가격업소 검증가";
         if (place.isHiddenGem()) return "덜 알려진 숨은 명소";
-        if (level == CongestionLevel.QUIET) return "이 날짜 혼잡 예보가 여유예요";
+        if (level == CongestionLevel.QUIET) return "이 날짜 혼잡 예보가 한산이에요";
         return "인기 명소보다 한산한 편이에요";
     }
 

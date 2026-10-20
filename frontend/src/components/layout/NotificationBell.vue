@@ -1,62 +1,34 @@
 <script setup>
 /**
- * 헤더 알림 종 (MY_008 예보 변경 알림의 헤더 진입점).
- *
- * 알림 자체는 새로 만들지 않는다 — 마이페이지 "알림 내역"이 쓰는 것과 **같은 API**를 본다.
- * (`listAlerts` / `setAlertRead` / `markAllAlertsRead`)
- * 여기는 "요약 + 빠른 이동"만 한다. 재구성 같은 실제 처리는 알림 내역 화면이 담당한다.
- *
- * 열려 있는 동안 주기적으로 다시 세지 않는다. 목 데이터라 스스로 늘어나지 않고,
- * 폴링은 배터리만 먹는다. 갱신은 ui.alertsVersion 이 오를 때(다른 화면에서 읽음 처리 등)
- * 와 라우트 변경 때만 한다.
+ * 헤더 알림 요약. App.vue가 관리하는 공유 알림함을 사용한다.
+ * SSE 수신 내용은 이동 권한이 아니다. 실제 코스와 작업 API에서 소유권을 검사한다.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick, useId } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useAuthStore } from '../../stores/auth.js'
 import { useUiStore } from '../../stores/ui.js'
-import { listAlerts, setAlertRead, markAllAlertsRead } from '../../api/mypage.js'
+import { useNotificationStore } from '../../stores/notifications.js'
+import { NOTIFICATIONS_ENABLED } from '../../api/notifications.js'
 import { fmtRelative } from '../../utils/format.js'
 import AppIcon from '../common/AppIcon.vue'
 
 const auth = useAuthStore()
 const ui = useUiStore()
 const route = useRoute()
-const router = useRouter()
 
 const uid = useId()
 const panelId = computed(() => `bell-${uid}`)
 
 const open = ref(false)
-const items = ref([])
-const unread = ref(0)
-const loading = ref(false)
+const notifications = useNotificationStore()
+const items = computed(() => notifications.items)
+const unread = computed(() => notifications.unread)
+const loading = computed(() => notifications.loading)
 const rootEl = ref(null)
 
 /** 패널에는 최근 것만 보여준다. 전체는 알림 내역 화면에서 본다. */
 const PREVIEW_MAX = 4
 const preview = computed(() => items.value.slice(0, PREVIEW_MAX))
-
-async function load () {
-  if (!auth.isLoggedIn) {
-    items.value = []
-    unread.value = 0
-    return
-  }
-  loading.value = true
-  try {
-    const res = await listAlerts()
-    items.value = res.items
-    unread.value = res.unread
-  } catch {
-    // 헤더 장식이 화면 전체를 막으면 안 된다 — 조용히 비운다
-    items.value = []
-    unread.value = 0
-  } finally {
-    loading.value = false
-  }
-}
-
-watch(() => [auth.user?.userId, route.fullPath, ui.alertsVersion], load, { immediate: true })
 
 // 로그아웃하거나 화면을 옮기면 열린 패널을 닫는다
 watch(() => [auth.isLoggedIn, route.fullPath], () => { open.value = false })
@@ -64,7 +36,6 @@ watch(() => [auth.isLoggedIn, route.fullPath], () => { open.value = false })
 async function toggle () {
   open.value = !open.value
   if (open.value) {
-    await load()
     await nextTick()
     rootEl.value?.querySelector('.panel')?.focus()
   }
@@ -91,23 +62,27 @@ onBeforeUnmount(() => {
 })
 
 async function openAlert (a) {
-  open.value = false
-  if (!a.read) {
+  if (!a.readAt) {
     try {
-      await setAlertRead(a.alertId, true)
-      ui.bumpAlerts()
-    } catch { /* 읽음 처리 실패는 이동을 막지 않는다 */ }
+      await notifications.markRead(a.id)
+    } catch { ui.toast('읽음 처리를 하지 못했어요. 다시 눌러 주세요.') }
   }
-  router.push({ name: 'my-alerts' })
 }
 
 async function readAll () {
   try {
-    const r = await markAllAlertsRead()
-    ui.bumpAlerts()
-    ui.toast(r.updated ? `알림 ${r.updated}건을 읽음으로 표시했어요` : '읽지 않은 알림이 없어요')
+    await notifications.markAllRead()
+    ui.toast('알림을 읽음으로 표시했어요')
   } catch {
     ui.toast('읽음 처리를 하지 못했어요')
+  }
+}
+
+async function clearHeader () {
+  try {
+    await notifications.clearHeader()
+  } catch {
+    ui.toast('알림을 숨기지 못했어요. 다시 시도해 주세요.')
   }
 }
 
@@ -140,21 +115,23 @@ const label = computed(() =>
     <div v-if="open" :id="panelId" class="panel" tabindex="-1" role="dialog" aria-label="알림">
       <div class="ph">
         <b>알림</b>
-        <button v-if="unread" class="sw" type="button" @click="readAll">모두 읽음</button>
+        <button v-if="unread" class="sw" type="button" :disabled="notifications.busy" @click="readAll">모두 읽음</button>
+        <button v-else-if="items.length" class="sw" type="button" :disabled="notifications.busy" @click="clearHeader">모두 삭제</button>
       </div>
 
-      <p v-if="loading" class="pmsg">불러오는 중…</p>
-      <p v-else-if="!items.length" class="pmsg">새 알림이 없어요.</p>
+      <p v-if="!NOTIFICATIONS_ENABLED" class="pmsg">알림 서비스 준비 중이에요.</p>
+      <p v-else-if="notifications.error && !items.length" class="pmsg" role="alert">{{ notifications.error }}</p>
+      <p v-else-if="loading && !items.length" class="pmsg">불러오는 중…</p>
+      <div v-else-if="!items.length" class="pmsg empty-notifications"><AppIcon name="bell" :size="28" /><p>알림이 없습니다.</p></div>
 
       <ul v-else class="plist">
-        <li v-for="a in preview" :key="a.alertId">
-          <button class="prow" type="button" :class="{ unread: !a.read }" @click="openAlert(a)">
+        <li v-for="a in preview" :key="a.id">
+          <button class="prow" type="button" :disabled="notifications.busy" :class="{ unread: !a.readAt }" @click="openAlert(a)">
             <span class="sev" aria-hidden="true" />
             <span class="ptx">
-              <span class="pt">{{ a.courseName }}</span>
+              <span class="pt">{{ a.title }}</span>
               <span class="pd">
-                {{ a.after?.kind || '예보 변경' }}
-                <template v-if="a.after?.warning"> · {{ a.after.warning }}</template>
+                {{ a.message }}
               </span>
             </span>
             <span class="pw">{{ fmtRelative(a.createdAt) }}</span>
@@ -162,7 +139,7 @@ const label = computed(() =>
         </li>
       </ul>
 
-      <RouterLink v-if="items.length" class="pall" :to="{ name: 'my-alerts' }" @click="open = false">
+      <RouterLink class="pall" :to="{ name: 'my-alerts' }" @click="open = false">
         알림 내역 전체 보기
         <AppIcon name="arrowRight" :size="14" />
       </RouterLink>
@@ -209,6 +186,7 @@ const label = computed(() =>
 .ph b { font-family: var(--font-head); font-size: 13px; font-weight: 800; }
 
 .pmsg { padding: 10px 10px 16px; font-size: 12px; color: var(--tx3); }
+.empty-notifications { display: grid; justify-items: center; gap: 12px; padding: 28px 10px; }
 
 .plist { display: flex; flex-direction: column; }
 .prow {

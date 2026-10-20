@@ -8,7 +8,6 @@ import type { AccommodationInput,
   CourseItemCost,
   CourseResult,
   CarRouteResult,
-  CongestionRescheduleOption,
   IndoorOutdoor,
   PlacePreference,
   RegionRef,
@@ -16,8 +15,9 @@ import type { AccommodationInput,
   CongestionLevel,
 } from '../assets/types/course'
 import { getMockWeather, weatherRecommendationAdjustment, weatherWarning } from './weatherMockService'
-import { savedCourseMockService } from './savedCourseMockService'
 import { apiRequest } from '../api/backendClient.js'
+import { ASYNC_COURSES_ENABLED } from '../api/notifications.js'
+import { addCalendarDays as dateAt, calendarDayOffset as dayOffset } from '../utils/format.js'
 import { ApiError } from '../api/errors.js'
 
 const pause = (ms = 650) => new Promise(resolve => setTimeout(resolve, ms))
@@ -30,7 +30,6 @@ const DAY_SLOTS = [
   { start: '12:00', end: '14:00' },
   { start: '15:00', end: '17:00' },
 ] as const
-const RESCHEDULE_START_TIMES = ['07:00', '09:00', '12:00', '15:00', '17:00'] as const
 
 type RegionCode = RegionRef['code']
 type MockPlace = {
@@ -88,14 +87,6 @@ const regionCentres: Record<RegionCode, { lat: number; lng: number }> = {
   NORTH: { lat: 33.48, lng: 126.55 },
 }
 
-const dateAt = (start: string, offset: number) => {
-  const date = new Date(`${start}T00:00:00Z`)
-  date.setUTCDate(date.getUTCDate() + offset)
-  return date.toISOString().slice(0, 10)
-}
-
-const dayOffset = (start: string, date: string) =>
-  Math.round((new Date(`${date}T00:00:00Z`).getTime() - new Date(`${start}T00:00:00Z`).getTime()) / 86400000)
 const normalizePlaceName = (name: string) => name.normalize('NFKC').replace(/\s+/g, '').toLocaleLowerCase('ko-KR')
 const minutesFromTime = (time: string) => {
   const [hours, minutes] = time.split(':').map(Number)
@@ -230,7 +221,7 @@ function makeWantItem(courseId: number, itemId: number, preference: PlacePrefere
     end_time: endTime,
     item_source: fixed ? 'USER_FIXED' : 'AI_RECOMMENDED',
     congestion_rate: rate,
-    congestion_level: rate < 35 ? 'QUIET' : rate < 65 ? 'NORMAL' : 'CROWDED',
+    congestion_level: levelOf(rate),
     recommendation_reason_code: fixed ? 'ROUTE' : 'STYLE',
     recommendation_reason: fixed ? '사용자가 지정한 일정으로 유지했어요.' : '꼭 가고 싶은 장소로 선택해 일정에 포함했어요.',
     operating_hours_warning: metadata?.operatingHours ? !isWithinOperatingHours(metadata, startTime, endTime) : undefined,
@@ -259,7 +250,7 @@ function recommendationScore(place: MockPlace, condition: CourseCondition, dayRe
   if (!hasFixedSchedule) score += accommodationMatchScore(place, accommodation) * accommodationWeight
   if (preferredRegions.has(place.region)) score += 3
   if (styleMatches) score += 2
-  if (place.congestionRate < 35) score += 2
+  if (levelOf(place.congestionRate) === 'QUIET') score += 2
   if (place.region === dayRegion) score += 2
   if (previousPlace?.region === place.region) score += 2
   return score
@@ -283,7 +274,7 @@ function makeRecommendedItem(courseId: number, itemId: number, place: MockPlace,
     end_time: slot.end,
     item_source: 'AI_RECOMMENDED',
     congestion_rate: rate,
-    congestion_level: rate < 35 ? 'QUIET' : rate < 65 ? 'NORMAL' : 'CROWDED',
+    congestion_level: levelOf(rate),
     recommendation_reason_code: 'ROUTE',
     recommendation_reason: '',
     accommodation_influenced: accommodationInfluenced || undefined,
@@ -377,53 +368,12 @@ function refreshDayOrder(day: CourseDay) {
   })
 }
 
-function mockCongestionAt(place: MockPlace, visitDate: string, startTime: string) {
-  const hour = Number(startTime.slice(0, 2))
-  const day = Number(visitDate.slice(-2))
-  const hourAdjustment = hour <= 9 ? -25 : hour <= 11 ? -12 : hour >= 15 ? 8 : 2
-  const dayAdjustment = ((day + place.id) % 4) * 3 - 4
-  return Math.min(95, Math.max(12, place.congestionRate + hourAdjustment + dayAdjustment))
-}
-
-function congestionLevel(rate: number): CourseItem['congestion_level'] {
-  return rate < 35 ? 'QUIET' : rate < 65 ? 'NORMAL' : 'CROWDED'
-}
-
-function rescheduleCandidates(course: CourseResult, itemId: number): CongestionRescheduleOption[] {
-  const item = course.days.flatMap(day => day.items).find(candidate => candidate.id === itemId)
-  if (!item || item.congestion_rate == null) return []
-  const place = findPlace(item.place_id, item.place_name)
-  if (!place) return []
-  const duration = item.start_time && item.end_time ? minutesFromTime(item.end_time) - minutesFromTime(item.start_time) : 120
-  return course.days
-    .flatMap(day => RESCHEDULE_START_TIMES.map(startTime => {
-      const endTime = timeFromMinutes(minutesFromTime(startTime) + duration)
-      const rate = mockCongestionAt(place, day.visit_date, startTime)
-      const weather = getMockWeather(day.visit_date, startTime)
-      const conflict = day.items.some(other => other.id !== itemId && other.start_time && other.end_time && overlaps(startTime, endTime, other.start_time, other.end_time))
-      return {
-        visit_date: day.visit_date,
-        start_time: startTime,
-        end_time: endTime,
-        congestion_rate: rate,
-        congestion_level: congestionLevel(rate)!,
-        ...weather,
-        conflict,
-      }
-    }))
-    .filter(option => !(option.visit_date === item.visit_date && option.start_time === item.start_time))
-    .filter(option => !option.conflict && option.congestion_rate < item.congestion_rate! && isWithinOperatingHours(place, option.start_time, option.end_time))
-    .sort((a, b) => a.congestion_rate - b.congestion_rate || a.visit_date.localeCompare(b.visit_date) || a.start_time.localeCompare(b.start_time))
-    .slice(0, 3)
-    .map(({ conflict: _conflict, ...option }) => option)
-}
-
 type ReasonCandidate = { key: string; code: CourseItem['recommendation_reason_code']; text: string }
 
 function buildRecommendationReason(item: CourseItem, place: MockPlace, condition: CourseCondition, previousPlace: MockPlace | undefined, usedReasonKeys: Set<string>): ReasonCandidate {
   const matchedRegion = condition.course_regions.find(region => region.code === place.region)
   const matchedStyle = condition.course_styles.find(style => place.styles.includes(style.code))
-  const isLowCongestion = place.congestionRate < 35
+  const isLowCongestion = levelOf(place.congestionRate) === 'QUIET'
   const isRouteEfficient = Boolean(item.inbound_distance_m && item.inbound_distance_m <= ROUTE_EFFICIENT_DISTANCE_M)
   const isSameRegionRoute = Boolean(matchedRegion && previousPlace?.region === place.region && isRouteEfficient)
   const candidates: ReasonCandidate[] = []
@@ -531,7 +481,7 @@ function placeFlexibleWants(days: CourseDay[], dayRegions: RegionCode[], prefere
 async function generateMockCourse(condition: CourseCondition, generationReason: CourseResult['generation_reason']): Promise<CourseResult> {
   await pause()
   const courseId = ++sequence
-  const dayCount = Math.max(1, Math.round((new Date(condition.end_date).getTime() - new Date(condition.start_date).getTime()) / 86400000) + 1)
+  const dayCount = Math.max(1, dayOffset(condition.start_date, condition.end_date) + 1)
   const days = Array.from({ length: dayCount }, (_, index) => ({ day_no: index + 1, visit_date: dateAt(condition.start_date, index), items: [] as CourseItem[] }))
   const wants = condition.course_place_preferences.filter(preference => preference.preference_type === 'WANT')
   const fixedWants = wants.filter(preference => preference.fixed_date || preference.fixed_time)
@@ -607,23 +557,45 @@ async function generateMockCourse(condition: CourseCondition, generationReason: 
     start_date: condition.start_date,
     end_date: condition.end_date,
     people: condition.people,
-    budget_total: condition.budget_total,
+
     transport: condition.transport,
     accommodation: condition.accommodation ? { ...condition.accommodation } : undefined,
     days,
   })
 }
 
-export function toCourseRequestPayload(condition: CourseCondition): CourseCondition {
+function regenerationPreferences(condition: CourseCondition, previous?: CourseResult): PlacePreference[] {
+  if (!previous) return condition.course_place_preferences
+  const wants = condition.course_place_preferences.filter(preference => preference.preference_type === 'WANT')
+  const existing = new Set(condition.course_place_preferences.map(preference =>
+    preference.place_id != null ? `PLACE:${preference.place_id}` : `${preference.source_code ?? ''}:${preference.source_place_id ?? ''}`))
+  const diversityAvoids = previous.days.flatMap(day => day.items).flatMap(item => {
+    if (wants.some(preference =>
+      (preference.place_id != null && preference.place_id === item.place_id)
+      || (preference.source_code != null && preference.source_place_id != null
+        && preference.source_code === item.source_code
+        && preference.source_place_id === item.source_place_id))) return []
+    const key = `PLACE:${item.place_id}`
+    if (existing.has(key)) return []
+    existing.add(key)
+    return [{ place_id: item.place_id, source_code: item.source_code === 'KAKAO_LOCAL' ? item.source_code : undefined,
+      source_place_id: item.source_place_id, place_name: item.place_name, address: item.address,
+      road_address: item.road_address, latitude: item.latitude, longitude: item.longitude,
+      category_name: item.category_name, preference_type: 'AVOID' as const }]
+  })
+  return [...condition.course_place_preferences, ...diversityAvoids]
+}
+
+export function toCourseRequestPayload(condition: CourseCondition, regenerate = false, previous?: CourseResult): CourseCondition & { regenerate?: boolean } {
   return {
     start_date: condition.start_date,
     end_date: condition.end_date,
     people: condition.people,
-    budget_total: condition.budget_total,
     transport: condition.transport,
     course_regions: condition.course_regions,
     course_styles: condition.course_styles,
-    course_place_preferences: condition.course_place_preferences,
+    course_place_preferences: regenerate ? regenerationPreferences(condition, previous) : condition.course_place_preferences,
+    ...(regenerate ? { regenerate: true } : {}),
     ...(condition.accommodation
       ? { accommodation: { ...condition.accommodation } }
       : {}),
@@ -640,16 +612,22 @@ export function applyAccommodationSelection(
   }
 }
 
-async function generate(condition: CourseCondition): Promise<CourseResult> {
+async function generate(condition: CourseCondition, regenerate = false, previous?: CourseResult): Promise<CourseResult> {
   return await apiRequest('/courses', {
     method: 'POST',
-    body: toCourseRequestPayload(condition),
+    body: toCourseRequestPayload(condition, regenerate, previous),
   }) as CourseResult
 }
 
 export function courseGenerationErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.status === 503) {
     return error.message || 'AI 코스 생성 서버가 일시적으로 혼잡합니다. 잠시 후 다시 시도해 주세요.'
+  }
+  if (error instanceof ApiError && error.status === 400) {
+    const detail = error.detail && typeof error.detail === 'object'
+      ? Object.values(error.detail as Record<string, unknown>).find(value => typeof value === 'string')
+      : undefined
+    return typeof detail === 'string' ? detail : (error.message || '입력값을 확인해 주세요.')
   }
   return '코스를 생성하지 못했어요. 다시 시도해 주세요.'
 }
@@ -661,6 +639,7 @@ async function updateAccommodation(
   return await apiRequest(`/courses/${course.id}/accommodation`, {
     method: 'PATCH',
     auth: !course.claim_token,
+    ...(ASYNC_COURSES_ENABLED ? { optionalAuth: true } : {}),
     body: {
       accommodation,
       ...(course.claim_token ? { claim_token: course.claim_token } : {}),
@@ -674,6 +653,7 @@ async function getRecommendedAccommodations(
   const items = await apiRequest(`/courses/${course.id}/accommodations/search`, {
     method: 'POST',
     auth: !course.claim_token,
+    ...(ASYNC_COURSES_ENABLED ? { optionalAuth: true } : {}),
     body: course.claim_token ? { claim_token: course.claim_token } : {},
   }) as AccommodationInput[]
   return items.map(item => ({
@@ -686,6 +666,7 @@ async function getCarRoute(course: CourseResult): Promise<CarRouteResult> {
   return await apiRequest(`/courses/${course.id}/routes/car`, {
     method: 'GET',
     auth: !course.claim_token && course.status === 'SAVED',
+    ...(ASYNC_COURSES_ENABLED ? { optionalAuth: true } : {}),
   }) as CarRouteResult
 }
 
@@ -693,12 +674,14 @@ export const generateMockCourseForTest = generateMockCourse
 
 /** 백엔드 CourseSwapResponse(course/model/CourseSwapResponse.java, snake_case) - 교체된 칸과 이동이 바뀐 다음 칸만 온다 */
 interface CourseSwapResponse {
+  budget_summary?: CourseResult['budget_summary']
   course_id: number
   average_congestion_rate: number | null
   congestion_level: CongestionLevel | null
   congestion_label: string | null
   message: string | null
   updated_items: Array<{
+    costs?: CourseItemCost[]
     item_id: number; day_no: number; position: number; visit_date: string
     place_id: number; place_name: string; category_name: string; image_url: string | null
     congestion_rate: number | null; congestion_level: CongestionLevel | null; congestion_label: string | null
@@ -709,15 +692,11 @@ interface CourseSwapResponse {
 
 export const courseMockService = {
   generateCourse: (condition: CourseCondition) => generate(condition),
-  regenerateCourse: (_condition: CourseCondition): Promise<CourseResult> => Promise.reject(new Error('코스 재생성은 아직 지원되지 않습니다.')),
+  regenerateCourse: (condition: CourseCondition, previous?: CourseResult): Promise<CourseResult> => generate(condition, true, previous),
   updateAccommodation,
   getRecommendedAccommodations,
   getCarRoute,
   applyAccommodationSelection,
-  recalculateRouteWithAccommodation: (condition: CourseCondition, accommodation: AccommodationInput) => generateMockCourse({
-    ...JSON.parse(JSON.stringify(condition)) as CourseCondition,
-    accommodation: { ...accommodation },
-  }, 'USER_REGENERATE'),
   /**
    * 대안 후보 - 백엔드 GET /places/{place_id}/alternatives (담당: 정동현).
    * 같은 카테고리, 그 날짜 예보 혼잡 미만, 10km 우선(부족하면 20km), 코스 내 중복 제외, 근거 문구는 서버가 만든다.
@@ -755,6 +734,7 @@ export const courseMockService = {
       body: { place_id: alternative.place_id },
       // 저장 코스는 본인만(JWT). 임시(READY) 코스는 생성이 비로그인이라 공개 경로
       auth: course.status === 'SAVED',
+      ...(ASYNC_COURSES_ENABLED ? { optionalAuth: true } : {}),
     }) as CourseSwapResponse
 
     const copy = JSON.parse(JSON.stringify(course)) as CourseResult
@@ -779,58 +759,32 @@ export const courseMockService = {
         delete item.longitude
         delete item.source_code
         delete item.source_place_id
-        item.costs = []
+        item.costs = updated.costs ?? []
       }
     }
-    // 비용 집계는 서버가 스왑에서 건드리지 않는다(실측 없는 비용을 지어내지 않음) - 로컬에서도 다시 계산하지 않는다
+    // The server recalculates the ledger; never retain the old place's summary.
+    copy.budget_summary = swap.budget_summary
+    copy.estimated_cost_min = swap.budget_summary?.total_expected_min
+    copy.estimated_cost_max = swap.budget_summary?.total_expected_max
     if (swap.average_congestion_rate != null) copy.average_congestion_rate = swap.average_congestion_rate
     // 렌터카 경로는 옛 장소 기준 구간이라 버린다 - 화면이 교체된 장소로 다시 받는다
     delete copy.car_route
     return copy
   },
-  async getQuieterTimeOptions(course: CourseResult, itemId: number) {
-    await pause(250)
-    return rescheduleCandidates(course, itemId)
-  },
-  async rescheduleCourseItem(course: CourseResult, itemId: number, option: CongestionRescheduleOption) {
-    await pause(250)
-    const copy = JSON.parse(JSON.stringify(course)) as CourseResult
-    const sourceDay = copy.days.find(day => day.items.some(item => item.id === itemId))
-    const targetDay = copy.days.find(day => day.visit_date === option.visit_date)
-    const item = sourceDay?.items.find(candidate => candidate.id === itemId)
-    if (!sourceDay || !targetDay || !item) throw new Error('시간을 변경할 일정을 찾지 못했습니다.')
-    const conflict = targetDay.items.some(other => other.id !== itemId && other.start_time && other.end_time && overlaps(option.start_time, option.end_time, other.start_time, other.end_time))
-    if (conflict) throw new Error('선택한 시간은 다른 일정과 겹칩니다.')
-    if (item.congestion_rate != null && option.congestion_rate >= item.congestion_rate) throw new Error('현재보다 한산한 시간만 선택할 수 있습니다.')
-    sourceDay.items = sourceDay.items.filter(candidate => candidate.id !== itemId)
-    item.visit_date = option.visit_date
-    item.start_time = option.start_time
-    item.end_time = option.end_time
-    item.congestion_rate = option.congestion_rate
-    item.congestion_level = option.congestion_level
-    const place = findPlace(item.place_id, item.place_name)
-    item.operating_hours_warning = !isWithinOperatingHours(place, option.start_time, option.end_time) || undefined
-    applyWeather(item, place, item.item_source === 'USER_FIXED')
-    targetDay.items.push(item)
-    refreshDayOrder(sourceDay)
-    recalculateDayTravel(sourceDay, copy.transport, copy.accommodation)
-    if (targetDay !== sourceDay) {
-      refreshDayOrder(targetDay)
-      recalculateDayTravel(targetDay, copy.transport, copy.accommodation)
-    }
-    return recalc(copy)
-  },
-  async saveCourse(course: CourseResult, title: string) {
+  async saveCourse(course: CourseResult, title: string): Promise<CourseResult> {
     if (course.claim_token) {
       const saved = await apiRequest(`/courses/${course.id}/claim`, {
         method: 'POST',
         auth: true,
         body: { claim_token: course.claim_token, title },
       }) as { id: number; status: 'SAVED'; title: string; saved_at: string }
+      if (saved.id !== course.id || saved.status !== 'SAVED') {
+        throw new Error('코스 저장을 확인하지 못했어요. 다시 확인해 주세요.')
+      }
       const { claim_token: _claimToken, claim_expires_at: _claimExpiresAt, ...safeCourse } = course
       return { ...safeCourse, id: saved.id, status: saved.status, title: saved.title }
     }
-    const saved = await savedCourseMockService.save(course, title)
-    return saved.course
+    throw new Error('코스 저장 권한이 없거나 만료되었어요. 결과를 다시 불러와 주세요.')
   },
 }
+import { levelOf } from '../utils/congestion'

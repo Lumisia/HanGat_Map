@@ -1,0 +1,45 @@
+<!doctype html><html lang="ko" data-theme="light"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI 코스 화면 테스트</title></head><body><div id="app"></div><script type="module">
+import {createApp,h,ref,nextTick} from 'vue';
+import {createPinia} from 'pinia';
+import {createRouter,createMemoryHistory} from 'vue-router';
+import AiCourse from '/src/views/ai-course/AiCourseView.vue';
+import Artwork from '/src/components/course/GenerationArtwork.vue';
+import Header from '/src/components/layout/AppHeader.vue';
+import MobileTabBar from '/src/components/layout/MobileTabBar.vue';
+import {courseMockService} from '/src/services/courseMockService';
+import '/src/assets/styles/fonts.css';
+import '/src/assets/styles/tokens.css';
+import '/src/assets/styles/base.css';
+import '/src/assets/styles.css';
+// Isolated local preview: no generation request is sent.
+window.fetch=async()=>Response.json({success:true,result:[]});
+if(!new URLSearchParams(location.search).has('resume')) sessionStorage.removeItem('hangat.ai-course.restore.v1');
+window.generationCalls=0;
+courseMockService.generateCourse=async condition=>{
+ window.generationCalls++;
+ const names=['김녕요트투어','제주도 국가 지질공원','사려니숲길'];
+ return {id:991,course_type:'USER',status:'READY',start_date:condition.start_date,end_date:condition.end_date,people:condition.people,transport:'TAXI',
+ claim_token:'local-preview-only',claim_expires_at:new Date(Date.now()+7200000).toISOString(),average_congestion_rate:36,
+ days:Array.from({length:Number(new URLSearchParams(location.search).get('days')) || 3},(_,i)=>i+1).map((day,i)=>{const date=new Date(condition.start_date);date.setDate(date.getDate()+i);const visit_date=date.toISOString().slice(0,10);
+ return {day_no:day,visit_date,items:names.map((name,j)=>({id:day*10+j,course_id:991,place_id:j+1,place_name:day===1?name:`${day}일차 ${name}`,category_name:'관광지',image_url:'/images/places/gwangchigi.jpg',
+ day_no:day,position:j+1,visit_date,start_time:`${10+j*3}:00`,end_time:`${12+j*3}:00`,item_source:'AI_RECOMMENDED',inbound_travel_minutes:j?22:undefined,inbound_distance_m:j?11500:undefined,
+ congestion_level:j?'NORMAL':undefined,congestion_rate:j?36:undefined,costs:[],recommendation_reason:'제주의 풍경을 감상하며 여유롭게 여행할 수 있는 장소입니다.',
+ weather:[{forecast_date:visit_date,sky_condition_code:'맑음',precipitation_probability:i?0:20,daily_evidence:{source_code:'KMA_SHORT',region_code:'EAST',spatial_scope:'REGION',granularity:'DAILY',issued_at_utc:'2026-09-19T20:00:00Z',temp_min:20+i,temp_max:26+i}}]}))};})};
+};
+courseMockService.getRecommendedAccommodations=async()=>['김녕오션뷰숙소','제주휴펜션','헬로김녕'].map((place_name,i)=>({source_code:'KAKAO_LOCAL',source_place_id:String(i),place_name,address:'제주특별자치도 제주시 구좌읍',latitude:33.5,longitude:126.8,image_url:'/images/places/gwangchigi.jpg',region:'EAST',recommendation_reason:'코스 주변에서 편하게 쉴 수 있는 숙소입니다.'}));
+window.failGeneration=()=>{courseMockService.generateCourse=async()=>{throw new Error('fixture failure')};};
+const router=createRouter({history:createMemoryHistory(),routes:[{path:'/',redirect:'/ai-course'},{path:'/ai-course',name:'ai-course',component:AiCourse}]});
+await router.push('/ai-course');
+const status=ref(new URLSearchParams(location.search).get('status'));
+const showNav=new URLSearchParams(location.search).has('nav');
+const pinia=createPinia();
+if(showNav){const navRoot=document.createElement('div');document.body.prepend(navRoot);createApp({render:()=>h('div',[h(Header),h(MobileTabBar)])}).use(pinia).use(router).mount(navRoot);}
+window.setArtworkStatus=value=>status.value=value;
+createApp({render:()=>h('main',{class:'content-scope'},[h('div',{style:'padding:10px 20px;font-size:12px;color:#60766e;display:flex;flex-wrap:wrap;gap:16px'},[h('span','로컬 미리보기 · 일정·날씨는 예시 데이터'),...[['입력 화면',''],['결과 화면','?preview=result'],['생성 중','?status=RUNNING'],['성공','?status=SUCCEEDED'],['실패','?status=FAILED']].map(([label,query])=>h('a',{href:location.pathname+query,style:'color:#1f7a6d;text-decoration:underline'},label))]),status.value?h(Artwork,{status:status.value}):h(AiCourse)])}).use(pinia).use(router).mount('#app');
+if(new URLSearchParams(location.search).get('preview')==='result'){
+ await nextTick();
+ document.querySelectorAll('.builder-progress nav button')[2].click();
+ await nextTick();document.querySelector('[data-error-target="styles"] button').click();
+ await nextTick();document.querySelector('.course-cta').click();
+}
+</script></body></html>

@@ -130,7 +130,7 @@ class CourseRequestValidationControllerTest {
     private String validRequest() {
         return """
                 {"start_date":"2026-09-10","end_date":"2026-09-12","people":2,
-                 "budget_total":500000,"transport":"RENTAL_CAR","course_regions":[],
+                 "transport":"RENTAL_CAR","course_regions":[],
                  "course_styles":[{"code":"NATURE","weight":1}],
                  "course_place_preferences":[]}
                 """;

@@ -460,6 +460,20 @@ export function estimateStrength (raw) {
 
 export const STRENGTH_LABEL = ['매우 약함', '약함', '보통', '강함', '매우 강함']
 
+export const PASSWORD_CHARACTER_MESSAGE = '영문, 숫자, 키보드 특수문자만 사용할 수 있어요 (공백 제외)'
+
+/** 새 비밀번호 원문 검사. 전각 문자 등을 영문으로 바꿔서 통과시키지 않는다. */
+export function hasAllowedPasswordCharacters (raw) {
+  return /^[\x21-\x7E]+$/.test(String(raw ?? ''))
+}
+
+/** 가입·재설정에만 적용해 기존 비밀번호로 로그인하는 동작은 바꾸지 않는다. */
+export function checkNewPassword (raw, context = {}) {
+  const result = checkPassword(raw, context)
+  if (!raw || hasAllowedPasswordCharacters(raw)) return result
+  return { ...result, ok: false, matchedRegex: false, errors: [PASSWORD_CHARACTER_MESSAGE, ...result.errors] }
+}
+
 /* ────────────────────── 검사 ────────────────────── */
 
 /**

@@ -21,6 +21,7 @@ import java.util.Map;
 public class KakaoAccommodationProvider {
 
     static final int SEARCH_RADIUS_METERS = 20_000;
+    static final int SELECTED_IDENTITY_RADIUS_METERS = 1_000;
     private static final int RECOMMENDATION_LIMIT = 3;
     private static final String SOURCE_CODE = "KAKAO_LOCAL";
     private static final String LODGING_CATEGORY = "AD5";
@@ -62,6 +63,32 @@ public class KakaoAccommodationProvider {
         if (place == null) {
             throw invalid("선택한 숙소가 현재 코스 검색 범위에 없습니다.");
         }
+        return resolve(place).orElseThrow(() -> invalid("숙소의 공식 제주 권역을 확인할 수 없습니다."));
+    }
+
+    /** 생성 전 Kakao 검색 선택은 선택 좌표 주변의 동일 AD5 identity로 다시 검증한다. */
+    public VerifiedAccommodation verifySelected(
+            String sourceCode,
+            String sourcePlaceId,
+            Double selectedLatitude,
+            Double selectedLongitude
+    ) {
+        if (!SOURCE_CODE.equals(sourceCode) || sourcePlaceId == null
+                || sourcePlaceId.isBlank() || sourcePlaceId.startsWith("MOCK_KAKAO_")) {
+            throw invalid("검증된 Kakao 숙소 identity가 아닙니다.");
+        }
+        if (selectedLatitude == null || selectedLongitude == null
+                || !Double.isFinite(selectedLatitude) || !Double.isFinite(selectedLongitude)) {
+            throw invalid("선택한 숙소의 좌표를 확인할 수 없습니다.");
+        }
+        KakaoPlace place = kakao.searchLodgings(
+                        java.math.BigDecimal.valueOf(selectedLongitude),
+                        java.math.BigDecimal.valueOf(selectedLatitude),
+                        SELECTED_IDENTITY_RADIUS_METERS)
+                .stream()
+                .filter(candidate -> sourcePlaceId.equals(candidate.id()))
+                .findFirst()
+                .orElseThrow(() -> invalid("선택한 숙소의 Kakao identity를 확인할 수 없습니다."));
         return resolve(place).orElseThrow(() -> invalid("숙소의 공식 제주 권역을 확인할 수 없습니다."));
     }
 

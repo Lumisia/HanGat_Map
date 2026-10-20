@@ -5,7 +5,8 @@
  * 한쪽만 고치면 화면을 돌렸을 때 메뉴가 달라진다 — 그래서 한 곳으로 모았다.
  *
  * 순서·라벨은 지정된 값이다. 임의로 바꾸지 말 것:
- *   메인 / AI코스 / 지도 / 저장코스(여기서부터 오른쪽) / 회원(사진) / 로그인·로그아웃
+ *   메인 / AI코스 / 지도 / 테마 / 저장코스(여기서부터 오른쪽) / 회원(사진) / 로그인·로그아웃
+ *   (테마는 2026-09-17 추가 - 관광지 소개 페이지의 입구. 헤더·모바일 탭바 둘 다에 들어간다)
  *
  * ⚠️ 마이페이지 탭은 **넣지 않는다** (로그인 여부와 무관하게 숨김).
  *    마이페이지로 가는 길은 헤더 오른쪽의 회원 아바타뿐이다.
@@ -29,6 +30,7 @@ export const NAV_TABS = [
   { to: '/', label: '메인', icon: 'home', side: 'left', match: 'exact' },
   { to: '/ai-course', label: 'AI코스', icon: 'route', side: 'left', match: 'prefix' },
   { to: '/map', label: '지도', icon: 'map', side: 'left', match: 'prefix' },
+  { to: '/themes', label: '테마', icon: 'album', side: 'left', match: 'prefix' },
   /* 저장코스부터 오른쪽. /courses/:id 에서도 켜져야 해서 prefix 다 */
   { to: '/courses', label: '저장코스', icon: 'bookmark', side: 'right', match: 'prefix' }
 ]
@@ -44,3 +46,7 @@ export const isTabActive = (tab, path) =>
 
 export const LEFT_TABS = NAV_TABS.filter(t => t.side === 'left')
 export const RIGHT_TABS = NAV_TABS.filter(t => t.side === 'right')
+
+// Menu entry is explicitly different from a result link or a page reload.
+export const tabDestination = tab => tab.to === '/ai-course'
+  ? { path: tab.to, query: { entry: 'new' } } : tab.to

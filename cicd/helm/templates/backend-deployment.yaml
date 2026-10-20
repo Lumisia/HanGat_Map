@@ -27,6 +27,7 @@ spec:
         app.kubernetes.io/component: backend
 
       annotations:
+        hangat.io/revision: {{ .Values.deployment.revision | quote }}
         checksum/config: {{ include (print $.Template.BasePath "/backend-configmap.yaml") . | sha256sum }}
         checksum/secret: {{ include (print $.Template.BasePath "/backend-secret.yaml") . | sha256sum }}
 
@@ -48,6 +49,15 @@ spec:
           image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
 
+          # CLI 인자를 사용해 private env보다 명시적인 배포 전환 설정을 우선한다.
+          args:
+            - {{ printf "--hangat.scheduling.enabled=%t" .Values.backend.scheduling.enabled | quote }}
+            # 공유 활성화 설정이 오래된 Secret/env의 false에 가려지지 않게 한다.
+            - {{ printf "--hangat.async.enabled=%s" (.Values.backend.configEnv.HANGAT_ASYNC_ENABLED | toString) | quote }}
+            # 오래된 private env에 Swagger 설정이 남아 있어도 운영에서는 열지 않는다.
+            - "--springdoc.api-docs.enabled=false"
+            - "--springdoc.swagger-ui.enabled=false"
+
           securityContext:
             {{- toYaml .Values.backend.containerSecurityContext | nindent 12 }}
 
@@ -62,6 +72,12 @@ spec:
 
             - secretRef:
                 name: {{ include "hangat.fullname" . }}-backend-secret
+
+          env:
+            - name: DEPLOYMENT_REVISION
+              value: {{ .Values.deployment.revision | quote }}
+            - name: DEPLOYMENT_IMAGE_TAG
+              value: {{ .Values.backend.image.tag | quote }}
 
           {{- if .Values.backend.probes.startup.enabled }}
           startupProbe:

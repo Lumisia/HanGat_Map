@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -56,6 +57,16 @@ public interface CongestionForecastRepository extends JpaRepository<CongestionFo
     /** 같은 버전을 다시 적재하려는지 판정한다 - 배치를 하루에 두 번 돌렸을 때. */
     boolean existsByBaseAt(LocalDateTime baseAt);
 
+    /** 단발성 코스 배치가 필요한 날짜의 당일 적재 여부를 확인한다. */
+    boolean existsByBaseAtAndForecastAt(LocalDateTime baseAt, LocalDateTime forecastAt);
+
+    /**
+     * 한 발표 버전에 예보가 있는 장소 id - 관광공사 집중률 집계 대상(= 주요 관광지) 목록.
+     * 숨은 명소 판정(HiddenGemRule)이 "유명도 하위"의 기준으로 쓴다.
+     */
+    @Query("select distinct f.place.id from CongestionForecast f where f.baseAt = :baseAt")
+    List<Long> findPlaceIdsOfVersion(@Param("baseAt") LocalDateTime baseAt);
+
     /**
      * 화면용 전체 조회 - 한 발표 버전의 (place_id, forecast_at, rate) 전부.
      *
@@ -70,6 +81,21 @@ public interface CongestionForecastRepository extends JpaRepository<CongestionFo
             order by f.place.id, f.forecastAt
             """)
     List<Object[]> findVersionRows(@Param("baseAt") LocalDateTime baseAt);
+
+    /**
+     * 여러 장소의 특정 날짜 집중률 - 찜 목록(favorite)의 '오늘 혼잡'. (placeId, rate).
+     * baseAt 을 함께 고정해야 발표 버전이 섞이지 않는다(클래스 주석). 그 날짜 예보가 없는 장소는 행이 없다.
+     */
+    @Query("""
+            select f.place.id, f.rate
+            from CongestionForecast f
+            where f.baseAt = :baseAt
+              and f.forecastAt = :forecastAt
+              and f.place.id in :placeIds
+            """)
+    List<Object[]> findRatesOn(@Param("baseAt") LocalDateTime baseAt,
+                               @Param("forecastAt") LocalDateTime forecastAt,
+                               @Param("placeIds") Collection<Long> placeIds);
 
     /**
      * 같은 발표 버전만 지운다. 재적재용이다.

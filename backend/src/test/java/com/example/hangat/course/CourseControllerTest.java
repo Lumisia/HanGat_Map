@@ -33,6 +33,24 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class CourseControllerTest {
 
+    @Test
+    void renewalReturnsOnlyProofAndExpiryWithNoStoreAndRequiresBody() throws Exception {
+        var service = mock(CourseService.class);
+        var claims = mock(CourseClaimService.class);
+        when(claims.renew(11L, "proof")).thenReturn(new CourseClaimTokenService.ClaimProof(
+                "renewed-proof", java.time.Instant.parse("2026-09-07T05:50:00Z")));
+        var mvc = MockMvcBuilders.standaloneSetup(new CourseController(service, claims, mock(CourseClaimTokenService.class)))
+                .setMessageConverters(new MappingJackson2HttpMessageConverter(objectMapper)).build();
+        mvc.perform(post("/courses/11/claim/renew").contentType(MediaType.APPLICATION_JSON).content("{\"claim_token\":\"proof\"}"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.result.claim_token").value("renewed-proof"))
+                .andExpect(jsonPath("$.result.claim_expires_at").value("2026-09-07T05:50:00Z"));
+        mvc.perform(post("/courses/11/claim/renew").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(service);
+    }
+
     private final ObjectMapper objectMapper = new ObjectMapper()
             .registerModule(new JavaTimeModule())
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -58,7 +76,6 @@ class CourseControllerTest {
                                   "start_date":"2026-08-27",
                                   "end_date":"2026-08-29",
                                   "people":2,
-                                  "budget_total":500000,
                                   "transport":"RENTAL_CAR",
                                   "course_regions":[],
                                   "course_styles":[{"code":"NATURE","weight":1}],
@@ -86,9 +103,10 @@ class CourseControllerTest {
                 .andExpect(jsonPath("$.result.days[0].items[0].costs").isArray())
                 .andExpect(jsonPath("$.result.days[0].items[0].costs").isEmpty())
                 .andExpect(jsonPath("$.result.budget_summary.has_cost_data").value(false))
-                .andExpect(jsonPath("$.result.budget_summary.budget_total").value(500000))
+                .andExpect(jsonPath("$.result.budget_total").doesNotExist())
+                .andExpect(jsonPath("$.result.budget_summary.budget_total").doesNotExist())
                 .andExpect(jsonPath("$.result.budget_summary.total_expected").isEmpty())
-                .andExpect(jsonPath("$.result.budget_summary.over_budget").isEmpty())
+                .andExpect(jsonPath("$.result.budget_summary.over_budget").doesNotExist())
                 .andExpect(jsonPath("$.result.days[0].items[0].congestion_rate").value(22.5))
                 .andExpect(jsonPath("$.result.days[0].items[0].congestion_level").value("QUIET"))
                 .andExpect(jsonPath("$.result.accommodation.place_name").value("제주 숙소"))
@@ -147,10 +165,10 @@ class CourseControllerTest {
                 null,
                 null,
                 new BigDecimal("22.5"),
-                com.example.hangat.course.model.CongestionLevel.QUIET,
+                com.example.hangat.map.model.enums.CongestionLevel.QUIET,
                 List.of(new CourseResponseDto.CongestionFactDto(
                         LocalDate.of(2026, 8, 28), new BigDecimal("22.5"),
-                        com.example.hangat.course.model.CongestionLevel.QUIET)),
+                        com.example.hangat.map.model.enums.CongestionLevel.QUIET)),
                 List.of(new CourseResponseDto.WeatherFactDto(
                         LocalDate.of(2026, 8, 28), LocalTime.of(9, 0),
                         new BigDecimal("27.5"), 20, "0", "1",
@@ -158,11 +176,10 @@ class CourseControllerTest {
         return new CourseResponseDto(
                 101L, "1.0", CourseType.USER, GenerationReason.INITIAL, CourseStatus.READY,
                 LocalDate.of(2026, 8, 27), LocalDate.of(2026, 8, 29),
-                (short) 2, 500000, Transport.RENTAL_CAR, accommodation,
+                (short) 2,  Transport.RENTAL_CAR, accommodation,
                 null, null,
                 new CourseResponseDto.BudgetSummaryDto(
-                        false, 500000, 0, null, null, null,
-                        null, null, null, null, null, null, 0),
+                        false, 0, null, null, null, null, null, null, 0),
                 List.of(new CourseResponseDto.DayDto(
                         1, LocalDate.of(2026, 8, 28), List.of(item))));
     }

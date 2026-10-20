@@ -56,7 +56,8 @@ public class CourseCommandService {
      * 소유자 없는 임시 코스는 이름 변경·삭제 대상이 아니다(저장하지 않은 코스라 지울 것도 없다).
      */
     private Course ownedByMe(Long courseId, Long authUserId) {
-        Course course = courseRepository.findById(courseId)
+        // 공유 생성/중지와 같은 부모 행 잠금: 삭제 직후 공유가 재활성화되는 경합을 막는다.
+        Course course = courseRepository.findByIdForClaim(courseId)
                 .orElseThrow(() -> new BaseException(BaseResponseStatus.COURSE_NOT_FOUND, courseId));
         if (!isOwner(course, authUserId)) {
             // 남의 눈에는 삭제된 코스와 없는 코스가 같아야 한다

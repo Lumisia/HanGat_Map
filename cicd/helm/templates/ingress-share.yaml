@@ -1,0 +1,48 @@
+{{- if .Values.ingress.enabled }}
+# 토큰이 URL에 포함된 경로만 분리한다. 기존 일반 API/웹 접근 로그는 유지한다.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "hangat.fullname" . }}-share
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hangat.labels" . | nindent 4 }}
+    app.kubernetes.io/component: share
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: {{ .Values.ingress.forceSslRedirect | quote }}
+    nginx.ingress.kubernetes.io/force-ssl-redirect: {{ .Values.ingress.forceSslRedirect | quote }}
+    nginx.ingress.kubernetes.io/enable-access-log: "false"
+    nginx.ingress.kubernetes.io/enable-opentelemetry: "false"
+    nginx.ingress.kubernetes.io/enable-rewrite-log: "false"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.web.host | quote }}
+        - {{ .Values.ingress.api.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.web.host | quote }}
+      http:
+        paths:
+          - path: /share
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "hangat.fullname" . }}-frontend
+                port:
+                  number: {{ .Values.frontend.service.port }}
+    - host: {{ .Values.ingress.api.host | quote }}
+      http:
+        paths:
+          - path: /shared-courses
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "hangat.fullname" . }}-backend
+                port:
+                  number: {{ .Values.backend.service.port }}
+{{- end }}

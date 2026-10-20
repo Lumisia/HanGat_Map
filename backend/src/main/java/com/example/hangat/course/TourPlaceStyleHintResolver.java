@@ -34,6 +34,9 @@ final class TourPlaceStyleHintResolver {
             confirmedStyleHints.add("CAFE");
         }
 
+        for(String style : StoredPlaceStyleResolver.resolve(place.getClassificationCode())) {
+            if(!confirmedStyleHints.contains(style))confirmedStyleHints.add(style);
+        }
         return List.copyOf(confirmedStyleHints);
     }
 }

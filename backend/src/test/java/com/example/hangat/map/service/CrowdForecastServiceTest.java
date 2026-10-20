@@ -107,6 +107,7 @@ class CrowdForecastServiceTest {
 
         CrowdForecastResponse res = service.getForecast();
 
+        assertThat(res.getBaseDate()).isEqualTo(오늘발표.toLocalDate());
         assertThat(res.getFrom()).isEqualTo(첫날);
         assertThat(res.getDays()).isEqualTo(3);
 
@@ -153,9 +154,26 @@ class CrowdForecastServiceTest {
     void 예보가_없으면_빈_응답이지_오류가_아니다() {
         CrowdForecastResponse res = service.getForecast();
 
+        assertThat(res.getBaseDate()).isNull();
         assertThat(res.getFrom()).isNull();
         assertThat(res.getDays()).isZero();
         assertThat(res.getValues()).isEmpty();
+    }
+
+    @Test
+    void 발표일은_창_시작일과_별개다_새벽_적재는_어제부터_시작하는_창을_받는다() {
+        // 관광공사 API는 새벽 3시에 아직 어제부터 시작하는 창을 준다(2026-09 실측).
+        // 창 시작일로 '묵은 예보'를 판정하면 정상 적재에도 매일 갱신 대기가 뜬다 - 화면은 발표일을 봐야 한다.
+        save(금오름, 오늘발표, 첫날.minusDays(1), "40.00");
+        save(금오름, 오늘발표, 첫날, "20.00");
+        em.flush();
+        em.clear();
+
+        CrowdForecastResponse res = service.getForecast();
+
+        assertThat(res.getBaseDate()).isEqualTo(LocalDate.of(2026, 8, 24));
+        assertThat(res.getFrom()).isEqualTo(LocalDate.of(2026, 8, 23));   // 창은 하루 앞에서 시작한다
+        assertThat(res.getBaseDate()).isAfter(res.getFrom());
     }
 
     private void save(Place place, LocalDateTime baseAt, LocalDate jejuDay, String rate) {

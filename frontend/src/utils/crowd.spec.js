@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { crowdOn, weatherOn, tier, tierKo, dist, drive, bestDay, rank30 } from './crowd.js'
+import { crowdOn, weatherOn, tier, tierKo, dist, drive, bestDay, rank30, forecastDays } from './crowd.js'
 import { PLACES } from '../data/places.js'
 
 /* ═══ 원본 index.html:496~532 의 구현을 그대로 붙여 넣은 대조군 ═══
@@ -129,5 +129,16 @@ describe('dist / drive', () => {
     const km = dist(geum, seong)
     expect(km).toBeGreaterThan(55)
     expect(km).toBeLessThan(70)
+  })
+})
+
+describe('forecastDays - 예보 있는 날 수 (최종점검 #18: 팁 박스의 N일)', () => {
+  const series = n => Array.from({ length: 30 }, (_, k) => (k < n ? 10 + k : null))
+  const spot = n => ({ n: 'x', b: null, series: series(n) })
+
+  it('30일 창 안에서 예보 있는 날만 센다', () => {
+    expect(forecastDays(spot(21))).toBe(21)
+    expect(forecastDays(spot(30))).toBe(30)
+    expect(forecastDays({ n: 'x', b: null, series: null })).toBe(0)
   })
 })

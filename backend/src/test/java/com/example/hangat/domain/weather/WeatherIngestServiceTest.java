@@ -83,6 +83,8 @@ class WeatherIngestServiceTest {
         assertThat(result.updated()).isZero();
         assertThat(result.shortFailures()).isZero();
         assertThat(result.midFailed()).isFalse();
+        assertThat(result.shortCoveredRegions()).isEqualTo(4);
+        assertThat(result.hasCompleteShortTermCoverage()).isTrue();
         assertThat(result.shortIssuedAtKst()).isEqualTo("202609100500");
         assertThat(result.midIssuedAtKst()).isEqualTo("202609100600");
         assertThat(repository.count()).isEqualTo(32);
@@ -216,8 +218,36 @@ class WeatherIngestServiceTest {
         WeatherIngestResult result = service.ingest(MORNING);
 
         assertThat(result.shortRows()).isEqualTo(8);
+        assertThat(result.hasCompleteShortTermCoverage()).isFalse();   // D+2가 비었으니 불완전 - 배치가 재시도한다
         assertThat(repository.findFirstByRegionIdAndForecastAtAndGranularityOrderByBaseAtDesc(
                 north.getId(), PlaceNameNormalizer.jejuDayToUtc(TODAY.plusDays(3)), WeatherGranularity.DAILY)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("D+3이 비어도 권역마다 D+0~2가 있으면 판정은 완전 - 단기예보 창 끝은 발표 시각에 따라 비기도 한다")
+    void dayThreeMissingStillCountsAsCovered() {
+        given(client.fetchShortTerm(eq("20260910"), eq("0500"), anyInt(), anyInt()))
+                .willAnswer(inv -> shortItems(inv.getArgument(3), TODAY, 3));
+
+        WeatherIngestResult result = service.ingest(MORNING);
+
+        assertThat(result.shortRows()).isEqualTo(12);
+        assertThat(result.shortCoveredRegions()).isEqualTo(4);
+        assertThat(result.hasCompleteShortTermCoverage()).isTrue();
+    }
+
+    @Test
+    @DisplayName("한 권역이라도 D+0~2가 빠지면 불완전 - 행 총수가 아니라 권역별로 본다")
+    void missingRequiredDayInOneRegionIsIncomplete() {
+        // 동부(ny 37)만 이틀치, 나머지 세 권역은 나흘치 → 총 14행. 총수를 권역×3(=12) 기준으로 완화했다면 넘어서 완전으로 오판한다
+        given(client.fetchShortTerm(eq("20260910"), eq("0500"), anyInt(), eq(37)))
+                .willAnswer(inv -> shortItems(37, TODAY, 2));
+
+        WeatherIngestResult result = service.ingest(MORNING);
+
+        assertThat(result.shortRows()).isEqualTo(14);
+        assertThat(result.shortCoveredRegions()).isEqualTo(3);
+        assertThat(result.hasCompleteShortTermCoverage()).isFalse();
     }
 
     @Test

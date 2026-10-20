@@ -14,6 +14,10 @@ public interface CourseItemCostRepository extends JpaRepository<CourseItemCost, 
     /** 비용 내역 화면·합산 재계산용 한 판. */
     List<CourseItemCost> findByCourseId(Long courseId);
 
+    @Modifying
+    @Query("delete from CourseItemCost c where c.course.id = :courseId and c.courseItem.id = :itemId")
+    int deleteByCourseAndItem(@Param("courseId") Long courseId, @Param("itemId") Long itemId);
+
     /**
      * 재계산 전 초기화 - 이 테이블은 수정하지 않고 지우고 다시 만든다(엔티티 클래스 주석 참고).
      * 벌크 DELETE인 이유는 {@code CongestionForecastRepository#deleteVersion} 참고.

@@ -37,10 +37,15 @@ public class JwtProvider {
 
     // userId만 담음. JWT는 암호화가 아니라 서명이라 Base64만 풀면 다 보임.
     public String createAccessToken(Long userId) {
+        return createAccessToken(userId, 0);
+    }
+
+    public String createAccessToken(Long userId, long authVersion) {
         Date now = new Date();
 
         return Jwts.builder()
                 .subject(String.valueOf(userId))
+                .claim("authVersion", authVersion)
                 .issuedAt(now)
                 .expiration(new Date(now.getTime() + accessTokenTtlMs))
                 .signWith(key)
@@ -51,6 +56,15 @@ public class JwtProvider {
 
     // 만료랑 위조를 걸러서 BaseException으로 바꿔줌.
     public Long parseUserId(String token) {
+        return Long.valueOf(parseClaims(token).getSubject());
+    }
+
+    public long parseAuthVersion(String token) {
+        Number version = parseClaims(token).get("authVersion", Number.class);
+        return version == null ? 0 : version.longValue();
+    }
+
+    private Claims parseClaims(String token) {
         try {
             Claims claims = Jwts.parser()
                     .verifyWith(key)
@@ -58,7 +72,8 @@ public class JwtProvider {
                     .parseSignedClaims(token)
                     .getPayload();
 
-            return Long.valueOf(claims.getSubject());
+            Long.valueOf(claims.getSubject());
+            return claims;
         } catch (ExpiredJwtException e) {
             throw new BaseException(BaseResponseStatus.JWT_EXPIRED);
         } catch (JwtException | IllegalArgumentException e) {

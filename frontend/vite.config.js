@@ -71,12 +71,15 @@ function htmlCspPlugin () {
              origin을 빌드 시점에 추가해 운영 요청이 CSP에 막히지 않게 한다. */
           `connect-src 'self'${apiOrigin ? ` ${apiOrigin}` : ''} https://api.pwnedpasswords.com https://dapi.kakao.com http://dapi.kakao.com${dev ? ' http://localhost:8080 ws: wss:' : ''}`,
           "font-src 'self' https://fonts.gstatic.com",
-          /* sharer.kakao.com: 카카오톡 공유가 새 창으로 폼 전송하는 목적지 -
-             form-action 은 대상 창이 달라도 전송 자체를 막는다 */
-          "form-action 'self' https://sharer.kakao.com",
+          /* 카카오톡 공유는 sharer.kakao.com 으로 폼을 전송하고, 카카오 로그인이 안 된 사용자는
+             거기서 accounts.kakao.com 로그인으로 302 된다. form-action 은 리다이렉트 대상까지 검사하므로
+             둘 다 열어야 한다 - accounts 가 빠지면 공유 팝업이 about:blank 에서 멈춘다
+             (2026-09-08 운영 실측: 초기 POST 는 통과, 로그인 리다이렉트에서 차단) */
+          "form-action 'self' https://sharer.kakao.com https://accounts.kakao.com",
           "base-uri 'none'",
           "object-src 'none'",
-          "frame-src 'none'",
+          // 카카오내비 SDK의 일부 Android 브라우저용 앱 실행 폴백만 허용한다.
+          "frame-src kakaonavi-sdk:",
           "manifest-src 'self'",
           ...(dev ? [] : ['upgrade-insecure-requests'])
         ]

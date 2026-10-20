@@ -38,18 +38,31 @@ public class CourseTravelService {
             return Optional.empty();
         }
 
+        BigDecimal straightKm = BigDecimal.valueOf(distance.getAsDouble())
+                .setScale(DISTANCE_SCALE, RoundingMode.HALF_UP);
         return Optional.of(new CourseTravelLegDto(
                 from.getContentId(),
                 from.getTitle(),
                 to.getContentId(),
                 to.getTitle(),
-                BigDecimal.valueOf(distance.getAsDouble()).setScale(DISTANCE_SCALE, RoundingMode.HALF_UP),
+                straightKm,
                 DistanceCalculationMethod.HAVERSINE,
                 null,
-                null,
+                estimatedMinutes(straightKm, transport),
                 transport,
                 null,
                 null));
+    }
+
+    /** Planning estimate only. It is never represented as a provider route result. */
+    private int estimatedMinutes(BigDecimal straightKm, Transport transport) {
+        double kilometresPerHour = switch (transport) {
+            case RENTAL_CAR -> 35d;
+            case TAXI -> 32d;
+            case PUBLIC_TRANSIT -> 18d;
+            case WALK_BIKE -> 5d;
+        };
+        return Math.max(1, (int) Math.ceil(straightKm.doubleValue() / kilometresPerHour * 60d));
     }
 
     public boolean isWithinAlternativeRadius(

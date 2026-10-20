@@ -53,6 +53,8 @@
   --course-mid-bg:#ffeacc;
   --course-busy:#e82a3f;
   --course-busy-bg:#ffdfe3;
+  /* busy-bg 위에 올리는 글자색. busy를 그대로 쓰면 라이트에서 3.5:1로 흐려진다 */
+  --course-busy-text:#b31e31;
 
   /* 혼잡 3단계(팀 통일 2026-08-31) - utils/congestion.ts, 백엔드 map CongestionLevel 과 짝
      QUIET <40 / NORMAL <70 / CROWDED >=70 */
@@ -149,7 +151,7 @@
 
 /* ══ 정동현 화면 전용 리스킨 토큰 (Toss풍) ═════════════════
    App.vue 가 route.meta.skin 을 보고 <html> 에 skin-toss 를 붙인다.
-   붙는 화면: 메인(/) · 관광지 상세(/places/:placeId) · 저장한 코스(/courses)
+   붙는 화면: 메인(/) · 저장한 코스(/courses)
    나머지 화면(AI코스·지도·회원·마이페이지)은 위 원본 값을 그대로 쓴다.
 
    다크에서는 이 블록이 이기지 않는다 — 아래 다크 선택자
@@ -195,6 +197,7 @@ html.skin-toss{
     --course-mid-bg:#53431f;
     --course-busy:#ff9299;
     --course-busy-bg:#552d32;
+    --course-busy-text:#ff9299;
     --quiet:#4fc48f;
     --normal:#ffab4d;
     --crowded:#ff7b86;
@@ -256,6 +259,7 @@ html.skin-toss{
   --course-mid-bg:#53431f;
   --course-busy:#ff9299;
   --course-busy-bg:#552d32;
+  --course-busy-text:#ff9299;
   --quiet:#4fc48f;
   --normal:#ffab4d;
   --crowded:#ff7b86;

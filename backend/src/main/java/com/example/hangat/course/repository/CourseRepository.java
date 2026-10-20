@@ -13,6 +13,8 @@ import org.springframework.data.repository.query.Param;
 import jakarta.persistence.LockModeType;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -21,9 +23,21 @@ import java.util.Optional;
  */
 public interface CourseRepository extends JpaRepository<Course, Long> {
 
+    /** 여행 확정 조회용. 로그인한 소유자의 저장 상태까지 함께 검사한다. */
+    Optional<Course> findByIdAndUserIdAndStatus(Long id, Long userId, CourseStatus status);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select course from Course course where course.id = :courseId")
     Optional<Course> findByIdForClaim(@Param("courseId") Long courseId);
+
+    @Query("""
+            select course.id from Course course
+            where course.courseType = com.example.hangat.course.model.enums.CourseType.USER
+              and course.status = com.example.hangat.course.model.enums.CourseStatus.READY
+              and course.createdAt <= :cutoff
+            order by course.createdAt, course.id
+            """)
+    List<Long> findExpiredReadyIds(@Param("cutoff") LocalDateTime cutoff, Pageable pageable);
 
     /** 상세 응답에서 선택 숙소를 transaction 안에서 한 번에 복원한다. */
     @Query("""

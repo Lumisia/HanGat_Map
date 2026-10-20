@@ -57,16 +57,19 @@ class CongestionForecastRepositoryTest {
 
     @BeforeEach
     void setUp() {
-        Region west = Region.builder().code("WEST").name("서부").displayOrder((byte) 1).build();
-        PlaceCategory tourist = PlaceCategory.builder().code("TOURIST").name("관광지").build();
-        집중률 = DataSource.builder()
+        Region west = em.getEntityManager().createQuery("from Region where code = 'WEST'", Region.class)
+                .getResultStream().findFirst().orElseGet(() ->
+                        em.persist(Region.builder().code("WEST").name("서부").displayOrder((byte) 1).build()));
+        PlaceCategory tourist = em.getEntityManager().createQuery(
+                        "from PlaceCategory where code = 'TOURIST'", PlaceCategory.class)
+                .getResultStream().findFirst().orElseGet(() ->
+                        em.persist(PlaceCategory.builder().code("TOURIST").name("관광지").build()));
+        집중률 = em.find(DataSource.class, "KTO_CNCTR");
+        if (집중률 == null) 집중률 = em.persist(DataSource.builder()
                 .code("KTO_CNCTR").displayName("한국관광공사 관광지별 집중률")
                 .providerName("한국관광공사").attributionText("한국관광공사")
                 .displayOrder((short) 1).isActive(true)
-                .build();
-        em.persist(west);
-        em.persist(tourist);
-        em.persist(집중률);
+                .build());
         금오름 = persistPlace(west, tourist, "금오름");
         성산일출봉 = persistPlace(west, tourist, "성산일출봉");
         em.flush();

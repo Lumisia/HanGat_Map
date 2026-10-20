@@ -10,7 +10,7 @@ function makeSummary(course: CourseResult, title: string): SavedCourseSummary {
     start_date: course.start_date,
     end_date: course.end_date,
     representative_places: course.days.flatMap(day => day.items).slice(0, 3).map(item => item.place_name),
-    average_congestion_rate: course.average_congestion_rate,
+    average_congestion_rate: course.average_congestion_rate ?? undefined,
     estimated_cost_min: course.estimated_cost_min,
     estimated_cost_max: course.estimated_cost_max,
   }

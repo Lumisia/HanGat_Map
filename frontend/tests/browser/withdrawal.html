@@ -1,0 +1,62 @@
+<!doctype html><html lang="ko" data-theme="light"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>회원탈퇴 미리보기 · 테스트 데이터</title></head><body><div id="app"></div><script type="module">
+// Local-only fixture: synthetic responses, never contacts production or sends mail.
+import {createApp,h} from 'vue';
+import {createPinia} from 'pinia';
+import {createRouter,createMemoryHistory,RouterView} from 'vue-router';
+import MyPage from '/src/views/mypage/MyPageView.vue';
+import Profile from '/src/views/mypage/ProfileTab.vue';
+import Recovery from '/src/views/auth/WithdrawalRecoveryView.vue';
+import Login from '/src/views/auth/LoginView.vue';
+import Header from '/src/components/layout/AppHeader.vue';
+import {useAuthStore} from '/src/stores/auth.js';
+import {acceptLoginResponse} from '/src/api/backendClient.js';
+import '/src/assets/styles/fonts.css';
+import '/src/assets/styles/tokens.css';
+import '/src/assets/styles/base.css';
+import '/src/assets/styles.css';
+const params=new URLSearchParams(location.search);
+const user={userId:7,nickname:'제주 여행자',email:'traveler@example.com',demoAccount:params.has('demo'),statusCode:'ACTIVE',emailVerified:true};
+const pinia=createPinia(),auth=useAuthStore(pinia);
+window.qaCalls=[];
+window.fetch=async(input,options={})=>{
+ const path=new URL(typeof input==='string'?input:input.url,location.origin).pathname;
+ window.qaCalls.push({path,method:options.method||'GET',body:options.body});
+ const success=result=>Response.json({success:true,result});
+ if(path.endsWith('/auth/withdrawal')) {
+   if(params.has('expired')) return Response.json({success:false,message:'인증 확인이 만료되었어요.'},{status:401});
+   return success({email:user.email,deleteAt:'2026-10-19T06:00:00Z'});
+ }
+ if(path.endsWith('/withdrawal/cancel')||path.endsWith('/withdrawal/decline')) return new Response(null,{status:204});
+ if(path.endsWith('/users/me/withdrawal')) {
+   if(window.qaFailWithdrawal) return Response.json({success:false,message:'이메일을 확인해 주세요.'},{status:400});
+   if(window.qaWaitWithdrawal) await new Promise(resolve=>{window.qaResolveWithdrawal=resolve});
+   return success({deleteAt:'2026-10-19T06:00:00Z'});
+ }
+ if(path.endsWith('/auth/login')) return success({recoveryRequired:true});
+ if(path.endsWith('/users/me/notification-settings')) return success({emailEnabled:false,inAppEnabled:true});
+ if(path.includes('/notifications')) return success({content:[],totalElements:0,totalPages:0,unreadCount:0});
+ if(path.endsWith('/favorites')) return success([]);
+ if(path.endsWith('/courses')||path.endsWith('/users/me/reviews')) return success({content:[],totalElements:0,totalPages:0});
+ return success(null);
+};
+auth.ready=true;
+if(!params.has('recovery')&&!params.has('login')) {
+ acceptLoginResponse({tokens:{accessToken:`qa.${btoa(JSON.stringify({sub:'7'}))}.fixture`,expiresIn:3600000},user});
+ auth.user=user;
+}
+const router=createRouter({history:createMemoryHistory(),routes:[
+ {path:'/mypage',component:MyPage,children:[
+  {path:'profile',name:'my-profile',component:Profile},
+  ...['reviews','favorites','alerts'].map(tab=>({path:tab,name:`my-${tab}`,component:{template:'<p>미리보기</p>'}}))
+ ]},
+ {path:'/login',name:'login',component:Login},
+ {path:'/auth/withdrawal',name:'withdrawal-recovery',component:Recovery},
+ {path:'/',name:'home',component:{template:'<p>홈 미리보기</p>'}},
+ {path:'/map',name:'map',component:{template:'<p>지도 미리보기</p>'}}
+]});
+await router.push(params.has('recovery')?'/auth/withdrawal':params.has('login')?'/login':'/mypage/profile');
+createApp({render:()=>h('div',[
+ ...(router.currentRoute.value.path.startsWith('/mypage')?[h(Header)]:[]),
+ h('div',{style:'padding:7px 16px;text-align:center;font-size:12px;color:var(--tx2);background:var(--surf)'},'화면 확인용 테스트 데이터 · 실제 탈퇴나 이메일 발송은 하지 않습니다.'),h(RouterView)
+])}).use(pinia).use(router).mount('#app');
+</script></body></html>

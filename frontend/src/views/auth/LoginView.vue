@@ -25,6 +25,8 @@ import { isValidEmail, checkEmail, EMAIL_INPUT_FILTER, EMAIL_INPUT_MESSAGE } fro
 import { putHandoff } from '../../utils/handoff.js'
 import { ApiError } from '../../api/errors.js'
 import { AUTH_HERO_IMAGES } from '../../data/authHeroImages.js'
+import { safeLoginReturnTo } from '../../utils/loginReturn.js'
+import demoProfile from '../../assets/images/demo-profile-v1.png'
 
 const SOCIALS = [
   { key: 'kakao', label: '카카오로 시작하기' },
@@ -42,6 +44,21 @@ const rememberEmail = ref(false)
 const touched = ref({ email: false })
 const serverError = ref('')
 const locked = ref(false)
+const demoBusy = ref(false)
+async function loginDemo () {
+  if (auth.loading || demoBusy.value) return
+  demoBusy.value = true; serverError.value = ''; locked.value = false
+  try {
+    await auth.loginDemo()
+    const to = redirectTo.value
+    auth.returnTo = null
+    ui.toast('한갓지도 데모계정으로 로그인했어요')
+    await router.replace(to)
+  } catch (e) {
+    serverError.value = e?.status === 429 || e?.code === 3003
+      ? '요청이 많아요. 잠시 후 다시 시도해 주세요.' : '데모 체험을 시작하지 못했어요. 잠시 후 다시 시도해 주세요.'
+  } finally { demoBusy.value = false }
+}
 
 onMounted(() => {
   const first = readRecentLogins().find(r => r.email)
@@ -62,12 +79,7 @@ const canSubmit = computed(() =>
   isValidEmail(email.value) && !!password.value && !auth.loading
 )
 
-const redirectTo = computed(() => {
-  const candidate = route.query.redirect || auth.returnTo
-  return typeof candidate === 'string' && candidate.startsWith('/') && !candidate.startsWith('//')
-    ? candidate
-    : '/mypage/reviews'
-})
+const redirectTo = computed(() => safeLoginReturnTo(route.query.redirect ?? auth.returnTo))
 
 async function submit () {
   touched.value.email = true
@@ -75,10 +87,15 @@ async function submit () {
   locked.value = false
   if (!canSubmit.value) return
   try {
-    await auth.login({
+    const result = await auth.login({
       email: email.value.trim(),
       password: password.value
     })
+    if (result.recoveryRequired) {
+      password.value = ''
+      await router.replace({ name: 'withdrawal-recovery' })
+      return
+    }
     pushRecentLogin(auth.user, { rememberEmail: rememberEmail.value })
     writeLastProvider('email')
     ui.toast(`${auth.displayName}님, 반가워요`)
@@ -104,10 +121,21 @@ function startSocialLogin (provider) {
 
 <template>
   <AuthLayout
+    back-to="/home"
+    back-label="홈으로 돌아가기"
     title="환영합니다"
     lead="나만의 제주 여행 코스를 저장하고, 혼잡도를 피해 여유로운 여행을 계획해보세요."
     :hero-images="AUTH_HERO_IMAGES"
   >
+    <p v-if="route.query.withdrawn === '1'" class="notice" role="status">
+      회원탈퇴가 처리되었어요. 안내 메일을 확인해 주세요. 탈퇴 시점부터 30일 이내에 로그인하면 취소할 수 있어요.
+    </p>
+    <p v-else-if="route.query.withdrawal === 'cancelled'" class="notice" role="status">
+      회원탈퇴를 취소했어요. 다시 로그인해 주세요.
+    </p>
+    <p v-else-if="route.query.withdrawal === 'kept'" class="notice" role="status">
+      탈퇴 상태를 유지했어요. 기존 삭제 예정 시각은 바뀌지 않아요.
+    </p>
     <p v-if="route.query.redirect" class="notice">
       로그인하면 보던 화면으로 돌아가요.
     </p>
@@ -154,6 +182,13 @@ function startSocialLogin (provider) {
       </button>
     </form>
 
+    <div class="demo-entry">
+      <button class="demo-login" type="button" :disabled="auth.loading || demoBusy" @click="loginDemo">
+        <span class="demo-avatar"><img :src="demoProfile" alt="" /><i /></span>
+        <span class="demo-copy"><strong>{{ demoBusy ? '데모 계정으로 로그인 중…' : '한갓지도 데모계정으로 바로 로그인' }}</strong><small>지도·코스와 날씨·혼잡도 정보를 체험해 보세요</small></span>
+        <span class="demo-arrow" aria-hidden="true">›</span>
+      </button>
+    </div>
     <div class="divider"><span>또는 소셜 로그인</span></div>
     <div class="socials">
       <div v-for="s in SOCIALS" :key="s.key" class="slot">
@@ -218,9 +253,7 @@ function startSocialLogin (provider) {
 .links a:hover { text-decoration: underline; }
 
 .demo-entry {
-  margin-top: 18px;
-  padding-top: 18px;
-  border-top: 1px solid var(--rule);
+  margin-top: 28px;
 }
 .demo-entry > p {
   margin-bottom: 10px;
@@ -230,11 +263,12 @@ function startSocialLogin (provider) {
   text-align: center;
 }
 .demo-login {
-  width: 100%; min-height: 46px;
+  position:relative; gap:12px; text-align:left; cursor:pointer;
+  width: 100%; min-height: 84px;
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0 18px;
+  padding: 16px;
   border: 1px solid color-mix(in srgb, var(--ac) 34%, var(--rule));
-  border-radius: var(--rp);
+  border-radius: 16px;
   background: var(--ac-bg);
   color: var(--ac-dk);
   font-family: var(--font-head);
@@ -247,6 +281,13 @@ function startSocialLogin (provider) {
   transform: translateY(-1px);
 }
 .demo-login:disabled { opacity: .58; cursor: wait; }
+.demo-avatar { position:relative; flex-shrink:0; width:44px; height:44px; border-radius:50%; background:var(--surf); border:2px solid var(--surf); }
+.demo-avatar img { width:100%; height:100%; object-fit:contain; border-radius:50%; }
+.demo-avatar i { position:absolute; bottom:-1px; right:-1px; width:11px; height:11px; background:var(--ac); border:2px solid var(--surf); border-radius:50%; }
+.demo-copy { flex:1; min-width:0; } .demo-copy strong { display:block; font-size:12px; line-height:1.6; color:var(--tx); } .demo-copy small { display:block; font-size:10px; font-weight:400; color:var(--tx2); line-height:1.6; margin-top:2px; }
+.demo-arrow { display:grid; place-items:center; flex-shrink:0; width:30px; height:30px; border-radius:50%; background:color-mix(in srgb,var(--ac) 14%,transparent); font-size:23px; }
+.demo-login:focus-visible { outline:3px solid var(--ac); outline-offset:4px; }
+@media(max-width:380px) { .demo-login { padding:14px 10px; gap:8px; } .demo-avatar { width:36px; height:36px; } }
 
 .demo { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--rule); }
 .demo p { font-size: 11.5px; color: var(--tx2); line-height: 1.9; }

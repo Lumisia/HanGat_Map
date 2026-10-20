@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import * as authApi from '../api/userAuth.js'
 import { ApiError } from '../api/errors.js'
 import {
-  accessTokenRemainSeconds, clearBackendSession
+  accessTokenRemainSeconds, clearBackendSession, getBackendSessionVersion
 } from '../api/backendClient.js'
 
 /**
@@ -38,6 +38,16 @@ export const useAuthStore = defineStore('auth', {
   },
 
   actions: {
+    async loginDemo () {
+      if (this.loading) return
+      this.loading = true
+      try {
+        const res = await authApi.loginDemo()
+        this.user = res.user
+        this.endedReason = null
+        return res
+      } finally { this.loading = false }
+    },
     /** 앱 시작 시 리프레시 쿠키로 세션 복구 */
     async restore () {
       if (this.ready) return
@@ -60,7 +70,7 @@ export const useAuthStore = defineStore('auth', {
       this.loading = true
       try {
         const res = await authApi.login(payload)
-        this.user = res.user
+        this.user = res.recoveryRequired ? null : res.user
         this.endedReason = null
         return res
       } finally {
@@ -70,6 +80,14 @@ export const useAuthStore = defineStore('auth', {
 
     async verifyEmail (token) {
       return authApi.verifyEmail(token)
+    },
+
+    async withdraw (email) {
+      const result = await authApi.withdrawAccount(email)
+      this.user = null
+      this.returnTo = null
+      this.endedReason = null
+      return result
     },
 
     async logout () {
@@ -97,12 +115,35 @@ export const useAuthStore = defineStore('auth', {
     },
 
     async updateNickname (nickname) {
-      this.user = await authApi.updateNickname(nickname)
+      const epoch = getBackendSessionVersion()
+      const user = await authApi.updateNickname(nickname)
+      if (epoch !== getBackendSessionVersion() || user.userId !== this.user?.userId) {
+        throw new ApiError(401, 'SESSION_CHANGED', '로그인 계정이 변경됐어요. 다시 시도해 주세요.')
+      }
+      this.user = { ...this.user, nickname: user.nickname }
       return this.user
     },
 
     async updateBirthDate (birthDate) {
-      this.user = await authApi.updateBirthDate(birthDate)
+      const epoch = getBackendSessionVersion()
+      const user = await authApi.updateBirthDate(birthDate)
+      if (epoch !== getBackendSessionVersion() || user.userId !== this.user?.userId) {
+        throw new ApiError(401, 'SESSION_CHANGED', '로그인 계정이 변경됐어요. 다시 시도해 주세요.')
+      }
+      this.user = { ...this.user, birthDate: user.birthDate }
+      return this.user
+    },
+
+    /** 업로드 중 로그아웃하거나 계정을 바꾸면 늦게 도착한 프로필로 세션을 복원하지 않는다. */
+    async updateProfileImage (file) {
+      const epoch = getBackendSessionVersion()
+      const userId = this.user?.userId
+      const user = await authApi.updateProfileImage(file)
+      if (epoch !== getBackendSessionVersion() || userId !== this.user?.userId || userId !== user?.userId) {
+        throw new ApiError(401, 'SESSION_CHANGED', '로그인 계정이 변경됐어요. 다시 시도해 주세요.')
+      }
+      // 동시에 편집한 닉네임 등은 건드리지 않고 사진 정보만 갱신한다.
+      this.user = { ...this.user, profileImageUrl: user.profileImageUrl }
       return this.user
     },
 

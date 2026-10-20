@@ -26,7 +26,7 @@ describe('CourseService 대안·스왑 (코스 상세 화면, 담당 정동현)'
   it('코스 상세는 로그인돼 있을 때만 JWT를 붙인다 - 본인 저장 코스가 3307로 막히지 않게', async () => {
     const detail = {
       id: 10, title: '스왑 검증용', start_date: '2026-09-06', end_date: '2026-09-07', duration_text: '1박 2일', people: 2,
-      estimated_cost_min: null, estimated_cost_max: null, average_congestion_rate: 38, congestion_level: 'QUIET', congestion_label: '여유',
+      estimated_cost_min: null, estimated_cost_max: null, average_congestion_rate: 38, congestion_level: 'QUIET', congestion_label: '한산',
       planned_average_congestion_rate: 41, swappable: true, manageable: true, days: [],
     }
     const requestMock = vi.mocked(apiRequest).mockResolvedValue(detail)
@@ -43,13 +43,13 @@ describe('CourseService 대안·스왑 (코스 상세 화면, 담당 정동현)'
 
   it('교체는 선택한 장소만 보내고, 저장 코스(본인)일 때만 JWT를 붙인다', async () => {
     const requestMock = vi.mocked(apiRequest).mockResolvedValue({
-      course_id: 7, average_congestion_rate: 26.04, congestion_level: 'QUIET', congestion_label: '여유', updated_items: [], message: '바꿨어요',
+      course_id: 7, average_congestion_rate: 26.04, congestion_level: 'QUIET', congestion_label: '한산', updated_items: [], message: '바꿨어요',
     })
 
     const summary = await CourseService.swapItem('7', 31, 601, true)
 
     expect(requestMock).toHaveBeenCalledWith('/courses/7/items/31/swap', { method: 'POST', body: { place_id: 601 }, auth: true })
-    expect(summary).toEqual({ averageRate: 26.04, levelLabel: '여유', message: '바꿨어요' })
+    expect(summary).toEqual({ averageRate: 26.04, levelLabel: '한산', message: '바꿨어요' })
 
     await CourseService.swapItem('7', 31, 601, false)
     expect(requestMock).toHaveBeenLastCalledWith('/courses/7/items/31/swap', expect.objectContaining({ auth: false }))

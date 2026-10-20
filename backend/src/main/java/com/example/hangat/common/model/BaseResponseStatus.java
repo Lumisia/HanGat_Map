@@ -32,6 +32,8 @@ public enum BaseResponseStatus {
     PASSWORD_TOO_SHORT(false, 3109, "비밀번호는 12자 이상이어야 합니다."),
     PASSWORD_TOO_LONG(false, 3110, "비밀번호가 너무 깁니다. 한글은 24자까지 가능합니다."),
     PASSWORD_CONFIRM_MISMATCH(false, 3111, "비밀번호가 일치하지 않습니다."),
+    DEMO_PASSWORD_LOCKED(false, 3112, "데모 계정의 비밀번호는 변경할 수 없어요."),
+    DEMO_PROFILE_IMAGE_LOCKED(false, 3113, "데모 계정의 프로필 사진은 변경할 수 없어요."),
 
     // 3150번대 OAuth·인증 보안
     OAUTH_LOGIN_FAILED(false, 3150, "소셜 로그인에 실패했습니다."),
@@ -42,9 +44,10 @@ public enum BaseResponseStatus {
     // 3200번대 장소
     PLACE_NOT_FOUND(false, 3201, "존재하지 않는 장소입니다."),
     REVIEW_NOT_FOUND(false, 3211, "존재하지 않는 후기입니다."),
-    REVIEW_FORBIDDEN(false, 3212, "본인이 작성한 후기만 삭제할 수 있습니다."),
-    REVIEW_RATING_OR_REPORT_REQUIRED(false, 3213, "별점 또는 혼잡 제보 중 하나는 필요합니다."),
+    REVIEW_FORBIDDEN(false, 3212, "본인이 작성한 후기만 수정하거나 삭제할 수 있습니다."),
+    REVIEW_RATING_OR_REPORT_REQUIRED(false, 3213, "별점을 선택해 주세요."),
     REVIEW_TOO_MANY_IMAGES(false, 3214, "후기 사진은 최대 5장까지입니다."),
+    REVIEW_EDIT_EXPIRED(false, 3215, "후기는 작성 후 7일 이내에만 수정할 수 있습니다."),
     LOGIN_REQUIRED(false, 3215, "로그인이 필요합니다."),
 
     // 3300번대 코스
@@ -56,6 +59,8 @@ public enum BaseResponseStatus {
     COURSE_ITEM_NOT_FOUND(false, 3306, "존재하지 않는 코스 일정입니다."),
     COURSE_FORBIDDEN(false, 3307, "본인의 코스만 변경할 수 있습니다."),
     COURSE_PLACE_DUPLICATED(false, 3308, "이미 코스에 담긴 장소입니다."),
+    COURSE_EXPIRED(false, 3309, "저장하지 않은 코스의 2시간 보관 기간이 만료되었습니다."),
+    COURSE_SHARE_UNAVAILABLE(false, 3310, "더 이상 볼 수 없는 코스예요."),
 
     // 3400번대 혼잡 예보
     CONGESTION_NOT_FOUND(false, 3401, "해당 날짜의 혼잡 예보가 없습니다."),

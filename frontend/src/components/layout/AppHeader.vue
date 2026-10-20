@@ -12,10 +12,12 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth.js'
 import { useUiStore } from '../../stores/ui.js'
-import { listAlerts } from '../../api/mypage.js'
-import { LEFT_TABS, NAV_TABS, RIGHT_TABS, isTabActive } from '../../config/navTabs.js'
+import { useNotificationStore } from '../../stores/notifications.js'
+import { LEFT_TABS, NAV_TABS, RIGHT_TABS, isTabActive, tabDestination } from '../../config/navTabs.js'
 import ThemeToggle from './ThemeToggle.vue'
 import NotificationBell from './NotificationBell.vue'
+import ProfileAvatar from '../common/ProfileAvatar.vue'
+import { currentProfileImagePath } from '../../utils/profileImage.js'
 
 defineProps({ compact: { type: Boolean, default: false } })
 
@@ -24,36 +26,15 @@ const ui = useUiStore()
 const route = useRoute()
 const router = useRouter()
 
-const unread = ref(0)
+const notifications = useNotificationStore()
+const unread = computed(() => notifications.unread)
 const mobileMenuOpen = ref(false)
 
-async function loadUnread () {
-  if (!auth.isLoggedIn) {
-    unread.value = 0
-    return
-  }
-  try {
-    const res = await listAlerts({ onlyUnread: true })
-    unread.value = res.unread
-  } catch {
-    unread.value = 0
-  }
-}
-
-watch(() => [auth.user?.userId, route.fullPath, ui.alertsVersion], loadUnread, { immediate: true })
 watch(() => route.fullPath, () => { mobileMenuOpen.value = false })
 
 const activeOf = computed(() => tab => isTabActive(tab, route.path))
-
-function openMobilePreview () {
-  const href = router.resolve(route.fullPath).href
-  const preview = window.open(
-    href,
-    'hangat-mobile-preview',
-    'popup,width=390,height=844,resizable=yes,scrollbars=yes'
-  )
-  preview?.focus()
-}
+// 내 정보는 이전 프론트 호환용 /me 주소이므로 로그인한 사용자의 공개 경로로 변환한다.
+const profileImagePath = computed(() => currentProfileImagePath(auth.user))
 
 async function onLogout () {
   mobileMenuOpen.value = false
@@ -75,8 +56,9 @@ async function onLogout () {
       <!-- 왼쪽: 메인 · AI코스 · 지도 -->
       <RouterLink
         v-for="t in LEFT_TABS"
+        @click="ui.enterAiCourse(t.to, $event)"
         :key="t.to"
-        :to="t.to"
+        :to="tabDestination(t)"
         class="tab"
         :class="{ on: activeOf(t) }"
         :aria-current="activeOf(t) ? 'page' : undefined"
@@ -90,7 +72,7 @@ async function onLogout () {
       <RouterLink
         v-for="t in RIGHT_TABS"
         :key="t.to"
-        :to="t.to"
+        :to="tabDestination(t)"
         class="tab"
         :class="{ on: activeOf(t) }"
         :aria-current="activeOf(t) ? 'page' : undefined"
@@ -99,25 +81,13 @@ async function onLogout () {
         <span v-if="t.badge && unread" class="nbadge tnum">{{ unread }}</span>
       </RouterLink>
 
-      <button
-        type="button"
-        class="mobile-preview-button"
-        aria-label="모바일 화면으로 미리보기"
-        title="모바일 화면으로 미리보기"
-        @click="openMobilePreview"
-      >
-        <svg width="15" height="18" viewBox="0 0 15 18" aria-hidden="true">
-          <rect x="2" y="1" width="11" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5" />
-          <path d="M6 14.5h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-        </svg>
-      </button>
       <ThemeToggle variant="icon" />
       <NotificationBell />
 
       <div class="account-actions">
         <template v-if="auth.isLoggedIn">
           <RouterLink to="/mypage/profile" class="who">
-            <span class="av">{{ auth.initial }}</span>
+            <ProfileAvatar :src="profileImagePath" :nickname="auth.displayName || auth.initial" />
             <b>{{ auth.displayName }}</b>
           </RouterLink>
           <button class="ghost" @click="onLogout">로그아웃</button>
@@ -151,11 +121,11 @@ async function onLogout () {
       <RouterLink
         v-for="t in NAV_TABS"
         :key="`mobile-${t.to}`"
-        :to="t.to"
+        :to="tabDestination(t)"
         class="mobile-menu-link"
         :class="{ on: activeOf(t) }"
         :aria-current="activeOf(t) ? 'page' : undefined"
-        @click="mobileMenuOpen = false"
+        @click="mobileMenuOpen = false; ui.enterAiCourse(t.to, $event)"
       >
         {{ t.label }}
       </RouterLink>
@@ -191,19 +161,6 @@ async function onLogout () {
 */
 .tab { position: relative; }
 .account-actions { display: contents; }
-
-.mobile-preview-button {
-  width: 34px;
-  height: 34px;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  color: var(--tx2);
-  transition: background .15s, color .15s;
-}
-.mobile-preview-button:hover { background: var(--surf2); color: var(--tx); }
 
 .mobile-menu-button,
 .mobile-header-menu { display: none; }
@@ -256,17 +213,10 @@ async function onLogout () {
 }
 .who:hover { background: var(--line); }
 .who b { font-weight: 700; }
-.av {
-  width: 22px; height: 22px; border-radius: 50%;
-  background: var(--ac-bg); color: var(--ac-dk);
-  font-size: 10.5px; font-weight: 800;
-  display: flex; align-items: center; justify-content: center;
-}
 .ghost.lg { background: var(--ac-bg); color: var(--ac-dk); font-weight: 700; }
 .ghost.lg:hover { filter: brightness(.96); background: var(--ac-bg); }
 
 @media (max-width: 768px) {
-  .mobile-preview-button { display: none; }
   .account-actions { display: none; }
   .mobile-menu-button { display: inline-flex; }
   .mobile-header-menu {
@@ -304,10 +254,9 @@ async function onLogout () {
 
 /*
   좁은 데스크톱에서는 모바일 메뉴 대신 압축한 상단 메뉴를 유지한다.
-  주요 탐색을 우선하기 위해 모바일 미리보기와 계정 이름만 감춘다.
+  주요 탐색을 우선하기 위해 계정 이름만 감춘다.
 */
 @media (max-width: 768px) and (hover: hover) and (pointer: fine) {
-  .mobile-preview-button { display: none; }
   .account-actions { display: contents; }
   .mobile-menu-button,
   .mobile-header-menu { display: none; }

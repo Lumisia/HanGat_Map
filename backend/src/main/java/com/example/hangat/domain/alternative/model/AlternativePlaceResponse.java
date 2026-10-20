@@ -23,6 +23,7 @@ public record AlternativePlaceResponse(
         String categoryName,
         String regionName,
         String imageUrl,
+        String overview,
         /** 미터 단위 - 프론트가 "1.2km"/"800m"를 스스로 포맷한다. */
         int distanceM,
         double congestionRate,
@@ -43,6 +44,7 @@ public record AlternativePlaceResponse(
                 place.getPrimaryCategory().getName(),
                 place.getRegion().getName(),
                 place.getImageUrl(),
+                place.getOverview(),
                 (int) Math.round(distanceKm * 1000),
                 rate,
                 level,

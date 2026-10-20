@@ -37,6 +37,7 @@ public class PasswordResetCodeService {
 
         userRepository.findByEmail(EmailNormalizer.normalize(request.email()))
                 .filter(User::canLogin)
+                .filter(user -> !user.isDemoAccount())
                 .ifPresent(user ->
                         issueCode(user, requestId));
 
@@ -58,7 +59,7 @@ public class PasswordResetCodeService {
                         PasswordResetCodeService::requestError
                 );
 
-        if(!reset.isCodeUsable()) {
+        if(!reset.isCodeUsable() || reset.getUser().isDemoAccount()) {
             throw requestError();
         }
 

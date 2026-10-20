@@ -14,6 +14,7 @@ import com.example.hangat.map.repository.PlaceSourceMappingRepository;
 import com.example.hangat.map.repository.RegionRepository;
 import com.example.hangat.map.service.PlaceNameNormalizer;
 import com.example.hangat.map.service.RegionResolver;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,13 +24,18 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 
-/** 착한가격 한 건 저장. 기준일은 CSV 배포 기준(2026-06-30, 차기 갱신 10-30). */
+/**
+ * 착한가격 한 건 저장. 기준일은 CSV 발행일 - {@code hangat.goodprice.base-date}(CSV 를 교체할 때 같이 바꾼다).
+ * 재실행 시 내용이 바뀐 업소는 갱신(REFRESHED), CSV 에서 빠진 업소는 {@link #clearMissing} 으로 해제한다.
+ */
 @Component
 public class GoodPriceIngestWriter {
 
     static final String SOURCE = "MOIS_GOODPRICE";
-    static final LocalDate BASE_DATE = LocalDate.of(2026, 6, 30);
+    private final LocalDate baseDate;
 
     private final PlaceRepository placeRepository;
     private final PlaceSourceMappingRepository mappingRepository;
@@ -43,33 +49,44 @@ public class GoodPriceIngestWriter {
                                  DataSourceRepository dataSourceRepository,
                                  RegionRepository regionRepository,
                                  PlaceCategoryRepository categoryRepository,
-                                 RegionResolver regionResolver) {
+                                 RegionResolver regionResolver,
+                                 @Value("${hangat.goodprice.base-date:2026-06-30}") String baseDate) {
         this.placeRepository = placeRepository;
         this.mappingRepository = mappingRepository;
         this.dataSourceRepository = dataSourceRepository;
         this.regionRepository = regionRepository;
         this.categoryRepository = categoryRepository;
         this.regionResolver = regionResolver;
+        this.baseDate = LocalDate.parse(baseDate);
     }
 
-    public enum Outcome { ALREADY, MATCHED, NONE }
+    public enum Outcome { ALREADY, REFRESHED, MATCHED, NONE }
 
     /**
-     * 이미 적재했으면 ALREADY(멱등), 기존 KTO 장소와 같은 가게면 플래그만 켜고 MATCHED.
-     * 이름이 같아도 주소 읍면동이 다르면 다른 가게다 - 신규(NONE)로 보낸다.
+     * 이미 적재한 업소는 CSV 내용이 그대로면 ALREADY(멱등), 메뉴·가격이 바뀌었거나 해제됐다 재지정됐으면 REFRESHED.
+     * 기존 KTO 장소와 같은 가게면 플래그만 켜고 MATCHED. 이름이 같아도 주소 읍면동이 다르면 다른 가게다 - 신규(NONE).
      */
     @Transactional
     public Outcome upsertMatched(Row row) {
         String sourceId = sourceIdOf(row);
-        if (mappingRepository.findBySourceCodeAndSourcePlaceId(SOURCE, sourceId).isPresent()) {
-            return Outcome.ALREADY;
+        Optional<PlaceSourceMapping> existing = mappingRepository.findBySourceCodeAndSourcePlaceId(SOURCE, sourceId);
+        if (existing.isPresent()) {
+            PlaceSourceMapping mapping = existing.get();
+            String hash = hashOf(row);
+            if (mapping.isActive() && hash.equals(mapping.getDataHash())) {
+                return Outcome.ALREADY;
+            }
+            mapping.getPlace().markGoodPrice(baseDate, row.menuText(), row.phone());
+            mapping.markSynced(hash, rawOf(row), null);
+            mapping.activate();
+            return Outcome.REFRESHED;
         }
         String normalized = PlaceNameNormalizer.normalize(row.name());
         List<Place> candidates = placeRepository.findByNormalizedName(normalized);
         for (Place place : candidates) {
             if (sameTown(place.getRoadAddress(), row.address())
                     || sameTown(place.getLotAddress(), row.address())) {
-                place.markGoodPrice(BASE_DATE, row.menuText(), row.phone());
+                place.markGoodPrice(baseDate, row.menuText(), row.phone());
                 saveMapping(place, sourceId, row);
                 return Outcome.MATCHED;
             }
@@ -98,7 +115,7 @@ public class GoodPriceIngestWriter {
                 .phone(row.phone())
                 .overview(row.menuText())
                 .isGoodPrice(true)
-                .goodPriceBaseDate(BASE_DATE)
+                .goodPriceBaseDate(baseDate)
                 .isHiddenGem(false)
                 .reviewCount(0)
                 .build());
@@ -112,17 +129,55 @@ public class GoodPriceIngestWriter {
                 .place(place)
                 .source(source)
                 .sourcePlaceId(sourceId)
-                .rawPayload("{\"name\":\"" + row.name() + "\",\"address\":\"" + row.address() + "\"}")
+                .dataHash(hashOf(row))
+                .rawPayload(rawOf(row))
                 .lastSyncedAt(LocalDateTime.now())
                 .build());
     }
 
+    /** CSV 에서 빠진 업소 - 지정 해제. 폐업 판정은 하지 않는다(해제 ≠ 폐업). 매핑은 남겨 재지정 때 되살린다. */
+    @Transactional
+    public ClearResult clearMissing(Set<String> seenSourceIds) {
+        List<PlaceSourceMapping> all = mappingRepository.findAllBySourceCodeWithPlace(SOURCE);
+        long active = all.stream().filter(PlaceSourceMapping::isActive).count();
+        // CSV 가 깨져 몇 줄만 읽힌 날 전부 해제하는 사고 방지 - 출석 체크와 같은 80% 선
+        if (active > 0 && seenSourceIds.size() < active * 0.8) {
+            return new ClearResult(0, true);
+        }
+        int cleared = 0;
+        for (PlaceSourceMapping m : all) {
+            if (!m.isActive() || seenSourceIds.contains(m.getSourcePlaceId())) {
+                continue;
+            }
+            m.getPlace().clearGoodPrice();
+            m.deactivate();
+            cleared++;
+        }
+        return new ClearResult(cleared, false);
+    }
+
+    /** skipped=true 면 CSV 수신이 부족해 해제를 보류한 것 */
+    public record ClearResult(int cleared, boolean skipped) {
+    }
+
+    private static String rawOf(Row row) {
+        return "{\"name\":\"" + row.name() + "\",\"address\":\"" + row.address() + "\"}";
+    }
+
+    /** 메뉴·가격·전화의 해시 - 재실행 때 바뀐 업소만 갱신한다 */
+    static String hashOf(Row row) {
+        return sha256(row.menuText() + "|" + row.phone());
+    }
+
     /** CSV 에 고유 ID 가 없어 업소명|주소 해시를 쓴다 - 재실행 멱등의 키 */
     static String sourceIdOf(Row row) {
+        return sha256(row.name() + "|" + row.address()).substring(0, 32);
+    }
+
+    private static String sha256(String text) {
         try {
-            byte[] d = MessageDigest.getInstance("SHA-256")
-                    .digest((row.name() + "|" + row.address()).getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(d).substring(0, 32);
+            byte[] d = MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(d);
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }

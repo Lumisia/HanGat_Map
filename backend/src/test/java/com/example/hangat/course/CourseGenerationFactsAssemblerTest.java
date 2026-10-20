@@ -5,7 +5,7 @@ import com.example.hangat.course.facts.TravelFact;
 import com.example.hangat.course.facts.WeatherFact;
 import com.example.hangat.course.facts.WeatherFactSet;
 import com.example.hangat.course.model.CongestionDto;
-import com.example.hangat.course.model.CongestionLevel;
+import com.example.hangat.map.model.enums.CongestionLevel;
 import com.example.hangat.course.model.CourseCandidateDto;
 import com.example.hangat.course.model.CourseRequestDto;
 import com.example.hangat.course.model.TourPlaceDto;
@@ -40,11 +40,11 @@ class CourseGenerationFactsAssemblerTest {
     @ParameterizedTest
     @CsvSource({
             "0, QUIET",
-            "33.32, QUIET",
-            "33.33, NORMAL",
+            "33.3, QUIET",
+            "39.9, QUIET",
             "42.5, NORMAL",
-            "66.66, NORMAL",
-            "66.67, CROWDED",
+            "69.9, NORMAL",
+            "70, CROWDED",
             "82.0, CROWDED",
             "100, CROWDED"
     })

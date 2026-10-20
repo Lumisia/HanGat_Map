@@ -4,8 +4,8 @@
  * 1순위: 백엔드 GET /main/calm-places (관광공사 집중률 실측 시드 기반)
  * 폴백: 백엔드가 죽어 있으면 기존 목업(data/data)으로 화면 유지 + live 플래그로 라벨 전환.
  *
- * 실데이터 장소는 아직 프론트에 상세 페이지 데이터가 없으므로 detailId를 null로 둔다
- * - 카드가 링크 없이 렌더된다 (장소 상세 실연동 때 placeId 라우팅으로 교체).
+ * 실데이터 카드는 장소 상세 페이지(/places/<placeId>)로 이어진다.
+ * 목업 폴백(백엔드 미가동)은 그 페이지가 읽을 백엔드 id가 없으므로 링크를 걸지 않는다.
  */
 import { apiGet } from './apiClient'
 import { levelLabel, places } from '../data/data'
@@ -14,8 +14,8 @@ export type CongestionLevelName = 'QUIET' | 'NORMAL' | 'CROWDED'
 
 export interface CalmPlaceCard {
   key: string
-  /** /places/:id 상세 이동이 가능한 목업 장소만 값이 있다 */
-  detailId: string | null
+  /** 카드를 눌렀을 때 갈 곳. 목업 폴백은 열 상세가 없어 null */
+  to: string | null
   name: string
   region: string
   level: CongestionLevelName
@@ -51,7 +51,7 @@ export const CalmPlaceService = {
         live: true,
         cards: rows.map(row => ({
           key: `live-${row.placeId}`,
-          detailId: null,
+          to: `/places/${row.placeId}`,
           name: row.name,
           region: row.regionLabel,
           level: row.level,
@@ -74,13 +74,13 @@ function sampleCards (limit: number): CalmPlaceCard[] {
     .slice(0, limit)
     .map(p => ({
       key: p.id,
-      detailId: p.id,
+      to: null,
       name: p.name,
       region: p.region,
       level: p.level as CongestionLevelName,
       levelLabel: levelLabel[p.level],
       imageUrl: p.imageUrl ?? p.image ?? null,
-      reason: p.level === 'QUIET' ? '이 날짜 혼잡 예보가 여유예요' : '인기 명소보다 한산한 편이에요'
+      reason: p.level === 'QUIET' ? '이 날짜 혼잡 예보가 한산이에요' : '인기 명소보다 한산한 편이에요'
     }))
 }
 

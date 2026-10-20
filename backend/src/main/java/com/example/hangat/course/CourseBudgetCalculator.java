@@ -4,8 +4,6 @@ import com.example.hangat.course.model.entity.CourseItemCost;
 import com.example.hangat.course.model.enums.CostAccuracy;
 import org.springframework.stereotype.Component;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,7 +14,6 @@ import java.util.Map;
 public class CourseBudgetCalculator {
 
     public CourseBudgetCalculation calculate(
-            Integer budgetTotal,
             List<CourseItemCost> costs
     ) {
         List<CourseItemCost> safeCosts = costs == null ? List.of() : costs;
@@ -74,29 +71,15 @@ public class CourseBudgetCalculator {
                 : null;
         Integer totalMinimum = sumIfKnown(hasCostData, verified, estimatedMinimum);
         Integer totalMaximum = sumIfKnown(hasCostData, verified, estimatedMaximum);
-        Integer remaining = budgetTotal == null || totalMaximum == null
-                ? null : toInteger((long) budgetTotal - totalMaximum);
-        BigDecimal usageRate = budgetTotal == null || budgetTotal <= 0
-                || totalMaximum == null
-                ? null
-                : BigDecimal.valueOf(totalMaximum)
-                        .multiply(BigDecimal.valueOf(100))
-                        .divide(BigDecimal.valueOf(budgetTotal), 2, RoundingMode.HALF_UP);
-        Boolean overBudget = budgetTotal == null || totalMaximum == null
-                ? null : totalMaximum > budgetTotal;
 
         return new CourseBudgetCalculation(
                 new CourseBudgetCalculation.BudgetSummary(
                         hasCostData,
-                        budgetTotal,
                         verified,
                         estimatedMaximum,
                         estimatedMinimum,
                         estimatedMaximum,
                         totalMaximum,
-                        remaining,
-                        usageRate,
-                        overBudget,
                         unknownCount),
                 totalMinimum,
                 totalMaximum,

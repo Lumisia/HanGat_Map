@@ -60,6 +60,11 @@ public class ReviewImage {
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
+    /** 유지한 사진은 다시 등록하지 않고 표시 순서만 조정한다. */
+    public void reorder(int sortOrder) {
+        this.sortOrder = sortOrder;
+    }
+
     // ────────────────────────── 생성 시각 관리 ──────────────────────────
 
     /** 후기와 사진이 처음 연결된 시각을 기록한다. */

@@ -6,6 +6,11 @@ describe('public Course API request', () => {
 
   afterEach(() => vi.unstubAllGlobals())
 
+  it('accepts a successful empty response from recovery decisions', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })))
+    await expect(apiRequest('/auth/withdrawal/cancel', { method: 'POST' })).resolves.toBeNull()
+  })
+
   it('does not request token reissue or send Authorization for anonymous generation', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

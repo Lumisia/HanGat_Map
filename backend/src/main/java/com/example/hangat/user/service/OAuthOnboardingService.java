@@ -5,6 +5,7 @@ import com.example.hangat.common.model.BaseResponseStatus;
 import com.example.hangat.common.util.EmailMasker;
 import com.example.hangat.common.util.EmailNormalizer;
 import com.example.hangat.config.mail.AuthMailSender;
+import com.example.hangat.config.mail.WelcomeMailDispatcher;
 import com.example.hangat.config.security.ratelimit.AuthRequestLimiter;
 import com.example.hangat.config.security.token.Purpose;
 import com.example.hangat.config.security.token.TokenHasher;
@@ -40,6 +41,7 @@ public class OAuthOnboardingService {
     private final UserSocialAccountRepository socialAccountRepository;
     private final UserRepository userRepository;
     private final AuthMailSender mailSender;
+    private final WelcomeMailDispatcher welcomeMail;
     private final VerificationCodeGenerator codeGenerator;
     private final VerificationCodeHasher codeHasher;
     private final EmailMasker emailMasker;
@@ -407,6 +409,9 @@ public class OAuthOnboardingService {
 
         flow.complete();
 
+        // 소셜 가입은 인증 링크 단계가 없다. 계정이 생긴 이 지점이 곧 가입 완료다.
+        welcomeMail.sendAfterCommit(user.getEmail(), user.getNickname());
+
         return authService.loginSocial(user);
     }
 
@@ -474,6 +479,7 @@ public class OAuthOnboardingService {
          *
          * SUSPENDED와 WITHDRAWN 사용자는 User.verifyEmail()로 활성화되지 않는다.
          */
+        boolean firstVerification = !targetUser.isEmailVerified();
         targetUser.verifyEmail();
 
         if (!targetUser.canLogin()) {
@@ -482,6 +488,15 @@ public class OAuthOnboardingService {
                             .getStatus()
                             .getLoginDeniedStatus()
             );
+        }
+
+        /*
+         * 이미 쓰고 있던 계정에 공급자를 하나 더 붙이는 것은 가입이 아니다.
+         * PENDING 이던 계정이 이번 코드로 처음 열렸을 때만 환영 메일을 보낸다.
+         * 위 canLogin() 검사보다 뒤에 둔다 - 정지·탈퇴 계정에 환영 메일이 나가면 안 된다.
+         */
+        if (firstVerification) {
+            welcomeMail.sendAfterCommit(targetUser.getEmail(), targetUser.getNickname());
         }
 
         UserSocialAccount socialAccount =

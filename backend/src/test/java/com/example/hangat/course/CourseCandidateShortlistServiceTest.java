@@ -19,6 +19,16 @@ class CourseCandidateShortlistServiceTest {
     private final CourseCandidateShortlistService service =
             new CourseCandidateShortlistService();
 
+    @Test void preservesCafeInCarShortlistEvenWhenOtherPlacesAreCloser() throws Exception {
+        var tree=(com.fasterxml.jackson.databind.node.ObjectNode)objectMapper.valueToTree(request("[]","[]"));
+        tree.putArray("course_styles").addObject().put("code","CAFE");
+        var req=objectMapper.treeToValue(tree,CourseRequestDto.class);
+        var raw=new ArrayList<TourPlaceDto>();
+        for(int i=0;i<20;i++)raw.add(at("near"+i,"near"+i,"제주시","A02",126.5+i*0.001));
+        raw.add(objectMapper.readValue("{\"contentid\":\"cafe\",\"title\":\"카페\",\"addr1\":\"제주시\",\"mapy\":33.4,\"mapx\":126.9,\"cat3\":\"A05020900\"}",TourPlaceDto.class));
+        assertThat(service.select(req,raw)).hasSize(15).extracting(c->c.place().getContentId()).contains("cafe");
+    }
+
     @Test
     void limitsOrdinaryCandidatesWhileKeepingWantAndExcludingAvoidAndOtherRegions()
             throws Exception {
@@ -111,7 +121,6 @@ class CourseCandidateShortlistServiceTest {
                   "start_date":"2026-08-28",
                   "end_date":"2026-08-29",
                   "people":2,
-                  "budget_total":400000,
                   "transport":"RENTAL_CAR",
                   "course_regions":%s,
                   "course_styles":[{"code":"NATURE","weight":1}],
@@ -174,7 +183,7 @@ class CourseCandidateShortlistServiceTest {
     }
 
     @Test
-    void emptyRegionsUsesWantAnchorAndIsInputOrderIndependent() throws Exception {
+    void emptyRegionsPreservesStyleCoverageAndIsInputOrderIndependent() throws Exception {
         List<TourPlaceDto> raw = new ArrayList<>();
         for (int i = 0; i < 16; i++) raw.add(at("near" + i, "근처" + i, "제주시", "A02", 126.5 + i * 0.001));
         raw.add(at("far", "먼 자연", "서귀포시", "A01", 126.95));
@@ -184,12 +193,12 @@ class CourseCandidateShortlistServiceTest {
         var first = service.select(request, raw).stream().map(c -> c.place().getContentId()).toList();
         java.util.Collections.reverse(raw);
         assertThat(service.select(request, raw).stream().map(c -> c.place().getContentId()).toList())
-                .isEqualTo(first).hasSize(15).doesNotContain("far");
+                .isEqualTo(first).hasSize(15).contains("far");
         var noWant = request("[]", "[]");
         var centered = service.select(noWant, raw).stream().map(c -> c.place().getContentId()).toList();
         java.util.Collections.reverse(raw);
         assertThat(service.select(noWant, raw).stream().map(c -> c.place().getContentId()).toList())
-                .isEqualTo(centered).doesNotContain("far");
+                .isEqualTo(centered).contains("far");
     }
 
     @Test

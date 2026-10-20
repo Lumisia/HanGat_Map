@@ -71,22 +71,39 @@ public class WeatherClient {
     }
 
     /* 공통 호출부 - 공통 파라미터 부착, 호출, 검증, 예외 반환 */
-    private <T> KmaResponse<T> call(Function<UriBuilder, UriBuilder> params, ParameterizedTypeReference<KmaResponse<T>> type) {
+    private <T> KmaResponse<T> call(
+            Function<UriBuilder, UriBuilder> params,
+            ParameterizedTypeReference<KmaResponse<T>> type
+    ) {
+        return call(params, type, 1);
+    }
+
+    private <T> KmaResponse<T> call(
+            Function<UriBuilder, UriBuilder> params,
+            ParameterizedTypeReference<KmaResponse<T>> type,
+            int page
+    ) {
         try {
             KmaResponse<T> response = restClient.get()
                     .uri(uriBuilder -> params.apply(uriBuilder)
                             .queryParam("serviceKey", "{serviceKey}")
                             .queryParam("dataType", "JSON")
-                            .queryParam("pageNo", 1)
+                            .queryParam("pageNo", page)
                             .build(properties.serviceKey()))
                     .retrieve()
                     .body(type);
+
             validate(response);
             return response;
+
         } catch (BaseException e) {
             throw e;
+
         } catch (Exception e) {
-            throw new BaseException(BaseResponseStatus.EXTERNAL_API_ERROR, e.getMessage());
+            throw new BaseException(
+                    BaseResponseStatus.EXTERNAL_API_ERROR,
+                    "기상청 예보를 조회하지 못했습니다."
+            );
         }
     }
 
@@ -119,5 +136,43 @@ public class WeatherClient {
         }
 
          return list.get(0);
+    }
+
+    /** 알림 비교용 단기예보 전체 페이지 조회. */
+    public List<ShortTermItem> fetchShortTermForNotifications(
+            String baseDate,
+            String baseTime,
+            int nx,
+            int ny
+    ) {
+        List<ShortTermItem> result = new java.util.ArrayList<>();
+
+        for (int page = 1; page <= 20; page++) {
+            KmaResponse<ShortTermItem> response = call(
+                    uri -> uri.path("/VilageFcstInfoService_2.0/getVilageFcst")
+                            .queryParam("base_date", baseDate)
+                            .queryParam("base_time", baseTime)
+                            .queryParam("nx", nx)
+                            .queryParam("ny", ny)
+                            .queryParam("numOfRows", 1000),
+                    new ParameterizedTypeReference<KmaResponse<ShortTermItem>>() {},
+                    page
+            );
+
+            List<ShortTermItem> rows = items(response);
+            Integer total = response.response().body().totalCount();
+
+            if (total == null || total < 1 || rows.isEmpty()) {
+                throw new IllegalStateException("기상청 예보 페이지가 불완전합니다.");
+            }
+
+            result.addAll(rows);
+
+            if (result.size() >= total) {
+                return List.copyOf(result);
+            }
+        }
+
+        throw new IllegalStateException("기상청 예보 페이지 제한을 초과했습니다.");
     }
 }

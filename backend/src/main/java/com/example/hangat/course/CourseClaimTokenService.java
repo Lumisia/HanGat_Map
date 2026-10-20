@@ -25,6 +25,9 @@ public class CourseClaimTokenService {
 
     static final String PURPOSE = "COURSE_CLAIM";
     private static final String PURPOSE_CLAIM = "purpose";
+    private static final String ORIGINAL_IAT = "original_iat";
+    private static final long WINDOW_MS = 30 * 60_000L;
+    private static final long MAX_AGE_SECONDS = 2 * 60 * 60L;
     private static final byte[] KEY_CONTEXT =
             "hangat/course-claim/v1".getBytes(StandardCharsets.UTF_8);
 
@@ -48,7 +51,7 @@ public class CourseClaimTokenService {
             throw new IllegalArgumentException("course.claim.ttl-ms must be positive");
         }
         this.key = Keys.hmacShaKeyFor(deriveKey(rootSecret));
-        this.ttlMs = ttlMs;
+        this.ttlMs = Math.min(ttlMs, WINDOW_MS);
         this.clock = clock;
     }
 
@@ -56,11 +59,26 @@ public class CourseClaimTokenService {
         if (courseId == null) {
             throw new IllegalArgumentException("courseId is required");
         }
-        Instant issuedAt = clock.instant();
+        Instant issuedAt = clock.instant().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
         Instant expiresAt = issuedAt.plusMillis(ttlMs);
+        return sign(courseId, issuedAt, issuedAt, expiresAt);
+    }
+
+    public ClaimProof renew(String token, Long courseId) {
+        Claims claims = verifiedClaims(token, courseId);
+        Instant original = originalIssuedAt(claims);
+        Instant now = clock.instant().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        Instant limit = original.plusSeconds(MAX_AGE_SECONDS);
+        Instant expires = now.plusMillis(WINDOW_MS);
+        return sign(courseId, original, now, expires.isAfter(limit) ? limit : expires);
+    }
+
+    private ClaimProof sign(Long courseId, Instant original, Instant issuedAt, Instant expiresAt) {
+        expiresAt = expiresAt.truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
         String token = Jwts.builder()
                 .subject(String.valueOf(courseId))
                 .claim(PURPOSE_CLAIM, PURPOSE)
+                .claim(ORIGINAL_IAT, original.getEpochSecond())
                 .id(UUID.randomUUID().toString())
                 .issuedAt(Date.from(issuedAt))
                 .expiration(Date.from(expiresAt))
@@ -70,6 +88,10 @@ public class CourseClaimTokenService {
     }
 
     public void validate(String token, Long expectedCourseId) {
+        verifiedClaims(token, expectedCourseId);
+    }
+
+    private Claims verifiedClaims(String token, Long expectedCourseId) {
         if (token == null || token.isBlank() || expectedCourseId == null) {
             throw new BaseException(BaseResponseStatus.COURSE_CLAIM_INVALID);
         }
@@ -83,14 +105,34 @@ public class CourseClaimTokenService {
             if (!PURPOSE.equals(claims.get(PURPOSE_CLAIM, String.class))
                     || !String.valueOf(expectedCourseId).equals(claims.getSubject())
                     || claims.getId() == null
-                    || claims.getId().isBlank()) {
+                    || claims.getId().isBlank() || claims.getExpiration() == null || claims.getIssuedAt() == null) {
                 throw new BaseException(BaseResponseStatus.COURSE_CLAIM_INVALID);
             }
+            Instant now = clock.instant();
+            Instant original = originalIssuedAt(claims);
+            if (original.isAfter(claims.getIssuedAt().toInstant()) || claims.getIssuedAt().toInstant().isAfter(now)) {
+                throw new BaseException(BaseResponseStatus.COURSE_CLAIM_INVALID);
+            }
+            if (!now.isBefore(claims.getExpiration().toInstant()) || !now.isBefore(original.plusSeconds(MAX_AGE_SECONDS))) {
+                throw new BaseException(BaseResponseStatus.COURSE_CLAIM_EXPIRED);
+            }
+            return claims;
         } catch (ExpiredJwtException exception) {
             throw new BaseException(BaseResponseStatus.COURSE_CLAIM_EXPIRED);
         } catch (JwtException | IllegalArgumentException exception) {
             throw new BaseException(BaseResponseStatus.COURSE_CLAIM_INVALID);
         }
+    }
+
+    private Instant originalIssuedAt(Claims claims) {
+        // Legacy proofs already carry signed iat. Never substitute the current time.
+        if (!claims.containsKey(ORIGINAL_IAT)) return claims.getIssuedAt().toInstant();
+        Object value = claims.get(ORIGINAL_IAT);
+        if (!(value instanceof Number number) || number.doubleValue() != number.longValue() || number.longValue() < 0) {
+            throw new BaseException(BaseResponseStatus.COURSE_CLAIM_INVALID);
+        }
+        try { return Instant.ofEpochSecond(number.longValue()); }
+        catch (java.time.DateTimeException exception) { throw new BaseException(BaseResponseStatus.COURSE_CLAIM_INVALID); }
     }
 
     private static byte[] deriveKey(String rootSecret) {
@@ -104,5 +146,6 @@ public class CourseClaimTokenService {
     }
 
     public record ClaimProof(String token, Instant expiresAt) {
+        @Override public String toString() { return "ClaimProof[redacted]"; }
     }
 }

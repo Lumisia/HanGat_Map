@@ -96,20 +96,20 @@ class CourseAiPreparationServiceTest {
                 assertThat(candidate.weatherFactSetId()).isNull());
         assertThat(result.weatherFactSets()).isEmpty();
 
-        assertThat(result.travelFacts()).hasSize(1);
+        assertThat(result.travelFacts()).hasSize(2);
         CourseAiInputDto.TravelFactDto travel = result.travelFacts().get(0);
         assertThat(travel.fromRef()).isEqualTo("east-want");
         assertThat(travel.toRef()).isEqualTo("east-normal");
         assertThat(travel.straightDistanceMeters()).isPositive();
         assertThat(travel.routeDistanceMeters()).isNull();
-        assertThat(travel.travelMinutes()).isNull();
+        assertThat(travel.travelMinutes()).isPositive();
         assertThat(result.candidates()).extracting(CourseAiInputDto.CandidateFactDto::candidateId)
                 .contains(travel.fromRef(), travel.toRef());
 
         String json = objectMapper.writeValueAsString(result);
         assertThat(json).contains("\"straightDistanceMeters\"");
         assertThat(json).contains("\"routeDistanceMeters\":null");
-        assertThat(json).contains("\"travelMinutes\":null");
+        assertThat(json).contains("\"travelMinutes\":");
         assertThat(json).doesNotContain(
                 "tripCondition", "userPreferences", "generationMetadata",
                 "identity", "placeId", "sourcePlaceId", "sourceCode",
@@ -168,13 +168,38 @@ class CourseAiPreparationServiceTest {
         assertThat(json).doesNotContain("\"humidity\"", "\"gridX\"", "\"baseDate\"");
     }
 
+    @Test
+    void marksExplicitSameConditionRegenerationWithoutChangingTheRequestContract() throws Exception {
+        CourseRequestDto request = objectMapper.readValue("""
+                {
+                  "start_date":"2026-08-27","end_date":"2026-08-27","people":2,
+                  "transport":"PUBLIC_TRANSIT","regenerate":true,
+                  "course_regions":[],"course_styles":[{"code":"NATURE"}],
+                  "course_place_preferences":[]
+                }
+                """, CourseRequestDto.class);
+        CourseCandidateDto candidate = new CourseCandidateDto(
+                place("one", "장소", "제주특별자치도", 33.4, 126.6, "A01"),
+                List.of(), null, List.of("NATURE"));
+        CourseAiPreparationService service = new CourseAiPreparationService(
+                new CourseAiInputAssembler(),
+                new CourseTravelService(new StraightLineDistanceCalculator()), Optional.empty());
+
+        CourseAiPreparationService.PreparedGeneration prepared =
+                service.prepareGeneration(request, List.of(candidate));
+
+        assertThat(prepared.metadata().generationReason())
+                .isEqualTo(com.example.hangat.course.model.GenerationReason.USER_REGENERATE);
+        assertThat(prepared.input().generationMetadata().generationReason())
+                .isEqualTo(com.example.hangat.course.model.GenerationReason.USER_REGENERATE);
+    }
+
     private CourseRequestDto request() throws Exception {
         return objectMapper.readValue("""
                 {
                   "start_date": "2026-08-27",
                   "end_date": "2026-08-29",
                   "people": 2,
-                  "budget_total": 500000,
                   "transport": "RENTAL_CAR",
                   "course_regions": [{"region_id": 2, "code": "EAST", "name": "동부"}],
                   "course_styles": [{"tag_id": 1, "code": "NATURE", "name": "자연", "weight": 1}],

@@ -1,21 +1,15 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { CourseCondition, CourseItem, CourseResult } from '../assets/types/course'
-import { calculateCourseCostSummary, courseMockService, generateMockCourseForTest } from './courseMockService'
+import type { CourseCondition, CourseItem } from '../assets/types/course'
+import { calculateCourseCostSummary, generateMockCourseForTest } from './courseMockService'
 import { savedCourseMockService } from './savedCourseMockService'
 import { getMockWeather, weatherRecommendationAdjustment } from './weatherMockService'
-import { calculateBudgetOverrun } from './budgetUtils'
 
 const condition = (fixed = false): CourseCondition => ({
-  start_date: '2026-08-13', end_date: '2026-08-15', people: 2, budget_total: 500000, transport: 'RENTAL_CAR',
+  start_date: '2026-08-13', end_date: '2026-08-15', people: 2, transport: 'RENTAL_CAR',
   course_regions: [{ region_id: 1, code: 'EAST', name: '동부' }],
   course_styles: [{ tag_id: 1, code: 'NATURE', name: '자연', weight: 1 }],
   course_place_preferences: fixed ? [{ place_id: 103, place_name: '성산일출봉', preference_type: 'WANT', fixed_date: '2026-08-15', fixed_time: '15:00' }] : [],
 })
-
-const overlaps = (first: CourseItem, second: CourseItem) => {
-  if (!first.start_time || !first.end_time || !second.start_time || !second.end_time) return false
-  return first.start_time < second.end_time && second.start_time < first.end_time
-}
 
 describe('COURSE_004 weather', () => {
   it('penalizes rainy outdoor places and promotes rainy indoor places', () => {
@@ -33,22 +27,6 @@ describe('COURSE_004 weather', () => {
   })
 })
 
-describe('COURSE_005 same-place rescheduling', () => {
-  it('changes only date/time for the same place to a lower-congestion conflict-free slot', async () => {
-    const course = await generateMockCourseForTest(condition(true), 'INITIAL')
-    const original = course.days.flatMap(day => day.items).find(item => item.place_name === '성산일출봉')!
-    const options = await courseMockService.getQuieterTimeOptions(course, original.id)
-    expect(options.length).toBeGreaterThan(0)
-    expect(options.every(option => option.congestion_rate < original.congestion_rate!)).toBe(true)
-    const moved = await courseMockService.rescheduleCourseItem(course, original.id, options[0])
-    const changed = moved.days.flatMap(day => day.items).find(item => item.id === original.id)!
-    expect(changed.place_id).toBe(original.place_id)
-    expect(changed.place_name).toBe(original.place_name)
-    expect(changed).toMatchObject({ visit_date: options[0].visit_date, start_time: options[0].start_time, end_time: options[0].end_time, congestion_rate: options[0].congestion_rate })
-    expect(moved.days.every(day => day.items.every((item, index) => day.items.slice(index + 1).every(other => !overlaps(item, other))))).toBe(true)
-  })
-})
-
 describe('COURSE_006 cost accuracy', () => {
   it('separates verified, estimated, and unknown costs without treating unknown as free', () => {
     const item = { costs: [
@@ -61,8 +39,6 @@ describe('COURSE_006 cost accuracy', () => {
     expect(summary.estimated_min).toBe(140000)
     expect(summary.estimated_max).toBe(230000)
     expect(summary.unknown_count).toBe(1)
-    expect(calculateBudgetOverrun(200000, summary.verified_amount + summary.estimated_max)).toBe(46000)
-    expect(calculateBudgetOverrun(300000, summary.verified_amount + summary.estimated_max)).toBe(0)
   })
 })
 

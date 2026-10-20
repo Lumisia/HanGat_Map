@@ -23,6 +23,8 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 @Service
 public class CoursePersistenceService {
@@ -50,6 +52,17 @@ public class CoursePersistenceService {
             CourseAiResultDto result,
             CourseGenerationMetadata metadata
     ) {
+        return persist(request, facts, result, metadata, null);
+    }
+
+    @Transactional
+    public CoursePersistenceResult persist(
+            CourseRequestDto request,
+            CourseGenerationFacts facts,
+            CourseAiResultDto result,
+            CourseGenerationMetadata metadata,
+            KakaoAccommodationProvider.VerifiedAccommodation accommodation
+    ) {
         if (request == null || facts == null || result == null || metadata == null) {
             throw new IllegalArgumentException("저장할 코스 생성 결과가 필요합니다.");
         }
@@ -62,7 +75,7 @@ public class CoursePersistenceService {
         Map<String, CourseCandidate> candidatesById = indexCandidates(facts);
         validateSelectedCandidates(result, candidatesById);
 
-        Course course = courseRepository.save(Course.builder()
+        var courseBuilder = Course.builder()
                 .courseType(CourseType.USER)
                 .generationReason(com.example.hangat.course.model.enums.GenerationReason.valueOf(
                         metadata.generationReason().name()))
@@ -70,14 +83,23 @@ public class CoursePersistenceService {
                 .startDate(request.getStartDate())
                 .endDate(request.getEndDate())
                 .people(toPeople(request.getPeople()))
-                .budgetTotal(request.getBudgetTotal())
                 .transport(com.example.hangat.course.model.enums.Transport.valueOf(
                         request.getTransport().name()))
-                .algorithmVersion(metadata.algorithmVersion())
-                .build());
+                .algorithmVersion(metadata.algorithmVersion());
+        if (accommodation != null) {
+            courseBuilder.accommodationSourceMapping(
+                    placeResolver.resolveVerifiedAccommodation(accommodation));
+        }
+        Course course = courseRepository.save(courseBuilder.build());
 
         Map<String, CourseItem> itemsByCandidateId = new LinkedHashMap<>();
         Map<String, String> categoryNamesByCandidateId = new LinkedHashMap<>();
+        Map<TravelPair, com.example.hangat.course.facts.TravelFact> travelByPair = facts.travelFacts().stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        travel -> new TravelPair(travel.fromCandidateId(), travel.toCandidateId()),
+                        java.util.function.Function.identity()));
+        BigDecimal congestionTotal = BigDecimal.ZERO;
+        int congestionCount = 0;
         for (int dayIndex = 0; dayIndex < result.days().size(); dayIndex++) {
             CourseAiResultDto.DayDto day = result.days().get(dayIndex);
             int dayNo = dayIndex + 1;
@@ -85,6 +107,9 @@ public class CoursePersistenceService {
             for (int itemIndex = 0; itemIndex < day.items().size(); itemIndex++) {
                 CourseAiResultDto.ItemDto resultItem = day.items().get(itemIndex);
                 CourseCandidate candidate = candidatesById.get(resultItem.candidateId());
+                String previousCandidateId = itemIndex == 0 ? null : day.items().get(itemIndex - 1).candidateId();
+                var inbound = previousCandidateId == null ? null
+                        : travelByPair.get(new TravelPair(previousCandidateId, resultItem.candidateId()));
                 Place place = placeResolver.resolvePlace(candidate);
                 CourseItem item = courseItemRepository.save(CourseItem.builder()
                         .course(course)
@@ -93,21 +118,47 @@ public class CoursePersistenceService {
                         .position(toShort(itemIndex + 1, "position"))
                         .visitDate(day.date())
                         .startTime(resultItem.startTime())
+                        .endTime(resultItem.startTime().plusMinutes(CourseSchedulePolicy.dwellMinutes(
+                                request.getCourseStyles() == null ? java.util.List.of() : request.getCourseStyles().stream()
+                                        .map(com.example.hangat.course.model.CourseStyleDto::getCode).toList(),
+                                candidate.styleHints().stream().map(com.example.hangat.course.facts.StyleHint::styleCode).toList(),
+                                candidate.internalPlaceCategory().code())))
+                        .inboundDistanceM(inbound == null ? null : toInteger(inbound.straightDistanceMeters()))
+                        .inboundTravelMinutes(inbound == null ? null : toShortNullable(inbound.travelMinutes()))
                         .itemSource(resolveItemSource(candidate))
                         .recommendationReason(resultItem.recommendationReason())
                         .build());
                 itemsByCandidateId.put(resultItem.candidateId(), item);
                 categoryNamesByCandidateId.put(
                         resultItem.candidateId(), place.getPrimaryCategory().getName());
+                var congestion = candidate.congestionFacts().stream()
+                        .filter(fact -> day.date().equals(fact.date())).findFirst().orElse(null);
+                if (congestion != null && congestion.rate() != null) {
+                    congestionTotal = congestionTotal.add(congestion.rate());
+                    congestionCount++;
+                }
             }
         }
 
+        BigDecimal average = congestionCount == 0 ? null
+                : congestionTotal.divide(BigDecimal.valueOf(congestionCount), 2, RoundingMode.HALF_UP);
+        course.updateAggregates(course.getEstimatedCostMin(), course.getEstimatedCostMax(), average);
         course.markReady();
         courseRepository.save(course);
 
         return new CoursePersistenceResult(
                 course, itemsByCandidateId, categoryNamesByCandidateId);
     }
+
+    private Integer toInteger(BigDecimal value) {
+        return value == null ? null : value.setScale(0, RoundingMode.HALF_UP).intValueExact();
+    }
+
+    private Short toShortNullable(Integer value) {
+        return value == null ? null : toShort(value, "inboundTravelMinutes");
+    }
+
+    private record TravelPair(String from, String to) { }
 
     private Map<String, CourseCandidate> indexCandidates(CourseGenerationFacts facts) {
         Map<String, CourseCandidate> result = new LinkedHashMap<>();

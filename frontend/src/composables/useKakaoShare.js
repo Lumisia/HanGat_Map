@@ -41,11 +41,11 @@ export async function preloadKakao () {
   } catch { return false }
 }
 
-function payload ({ title, description, imageUrl, url }) {
+function payload ({ title, description, imageUrl, url, buttonTitle = '지도에서 보기' }) {
   const link = { mobileWebUrl: url, webUrl: url }
   return imageUrl
-    ? { objectType: 'feed', content: { title, description, imageUrl, link }, buttons: [{ title: '지도에서 보기', link }] }
-    : { objectType: 'text', text: `${title}\n${description}`, link, buttonTitle: '지도에서 보기' }
+    ? { objectType: 'feed', content: { title, description, imageUrl, link }, buttons: [{ title: buttonTitle, link }] }
+    : { objectType: 'text', text: `${title}\n${description}`, link, buttonTitle }
 }
 
 /**

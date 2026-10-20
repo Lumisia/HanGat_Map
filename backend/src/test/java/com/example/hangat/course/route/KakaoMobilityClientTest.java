@@ -117,6 +117,32 @@ class KakaoMobilityClientTest {
                 "test-key", attempts, Duration.ZERO);
     }
 
+    @Test
+    void shortestDistanceUsesRoadSummaryAndDistancePriority() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(request -> {
+            org.assertj.core.api.Assertions.assertThat(request.getURI().toString())
+                    .contains("priority=DISTANCE").contains("summary=true");
+        }).andRespond(withSuccess("""
+                {"routes":[{"result_code":0,"summary":{"distance":19999,"duration":1800}}]}
+                """, MediaType.APPLICATION_JSON));
+        assertThat(client(builder, 1).shortestDistance(points().get(0), points().get(1))).isEqualTo(19999);
+        server.verify();
+    }
+
+    @Test
+    void shortestDistanceDoesNotTreatMalformedOrThrottledResponsesAsNoRoute() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(method(HttpMethod.GET)).andRespond(withSuccess("""
+                {"routes":[{"result_code":0,"summary":{}}]}
+                """, MediaType.APPLICATION_JSON));
+        assertThatThrownBy(() -> client(builder, 1).shortestDistance(points().get(0), points().get(1)))
+                .isInstanceOf(CourseCarRouteException.class);
+        server.verify();
+    }
+
     private List<KakaoMobilityClient.RoutePoint> points() {
         return List.of(
                 new KakaoMobilityClient.RoutePoint("COURSE_ITEM", "1", "south", 33.24, 126.57),

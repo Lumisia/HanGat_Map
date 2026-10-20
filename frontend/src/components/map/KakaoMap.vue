@@ -12,6 +12,7 @@ let map: KakaoMapInstance | undefined
 let maps: KakaoMaps | undefined
 let overlays: KakaoCustomOverlay[] = []
 let polyline: KakaoPolyline | undefined
+let resizeObserver: ResizeObserver | undefined
 
 const valid = (place: Place): place is Place & { latitude: number; longitude: number } => (
   Boolean(place.latitude && place.longitude && Number.isFinite(place.latitude) && Number.isFinite(place.longitude))
@@ -45,12 +46,15 @@ function selectedContent (place: Place) {
 function defaultContent (place: Place) {
   const content = document.createElement('button')
   content.type = 'button'
-  content.className = `kakao-marker ${place.level.toLowerCase()}`
-  content.setAttribute('aria-label', `${place.name} 혼잡도 ${place.score}`)
+  content.className = `kakao-marker ${place.congestionUnknown ? 'unknown' : place.level.toLowerCase()}`
+  // 순번 핀도 혼잡도는 읽어 준다 - 색만으로는 스크린리더가 등급을 알 수 없다
+  const congestion = place.congestionUnknown ? '혼잡 정보 없음' : `혼잡도 ${place.score}`
+  content.setAttribute('aria-label', `${place.name} ${place.pinDescription ?? ''} · ${congestion}`)
 
-  const score = document.createElement('span')
-  score.textContent = String(place.score)
-  content.append(score, document.createTextNode(place.name))
+  // 코스 지도처럼 핀에 순번을 다는 화면은 pinLabel을 준다 - 집중률 원값(21.88)은 보는 사람이 뜻을 알 수 없다
+  const badge = document.createElement('span')
+  badge.textContent = place.pinLabel ?? String(place.score)
+  content.append(badge, document.createTextNode(place.name))
   return content
 }
 
@@ -108,6 +112,12 @@ onMounted(async () => {
     if (!active || !container.value) return
     map = new maps.Map(container.value, { center: new maps.LatLng(33.38, 126.53), level: 10 })
     render()
+    resizeObserver = new ResizeObserver(() => {
+      if (!active) return
+      map?.relayout()
+      render()
+    })
+    resizeObserver.observe(container.value)
   } catch {
     if (active) emit('error')
   }
@@ -116,6 +126,7 @@ onMounted(async () => {
 watch(() => [props.places, props.selectedId, props.showRoute], render, { deep: true })
 onBeforeUnmount(() => {
   active = false
+  resizeObserver?.disconnect()
   clear()
   map = undefined
 })
@@ -127,3 +138,6 @@ onBeforeUnmount(() => {
     aria-label="제주 관광지 혼잡도 지도"
   />
 </template>
+<style>
+.kakao-marker.unknown span { background: #78858a; }
+</style>

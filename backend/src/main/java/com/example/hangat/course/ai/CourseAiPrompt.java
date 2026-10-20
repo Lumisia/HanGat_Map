@@ -1,5 +1,6 @@
 package com.example.hangat.course.ai;
 
+import com.example.hangat.course.service.RainyDayRule;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
@@ -35,6 +36,10 @@ public class CourseAiPrompt {
             22. 고정 시간이 없는 장소는 가능한 경우 10:00:00, 14:00:00, 18:00:00을 고려하되 fixedDate와 fixedTime을 절대 덮어쓰지 않는다.
             23. 각 DAY의 items는 startTime 오름차순이며 같은 시작 시간을 중복 사용하지 않는다.
             24. recommendationReason은 한 줄 근거로 작성하며 300자를 초과하지 않는다.
+            25. 선택 스타일과 후보 styleHintCodes를 장소 선택과 체류시간에 반영한다.
+            26. travelMinutes는 생성 단계의 추정 이동시간일 수 있으므로, 실제 경로값으로 설명하지 않고 체류시간과 함께 일정 간격 검증에만 사용한다.
+            27. generationMetadata.generationReason이 USER_REGENERATE이면 Hard Constraint를 유지하면서 INITIAL과 다른 후보 또는 방문 순서를 우선한다. 사실상 다른 구성이 불가능하면 조건을 완화하거나 장소를 만들지 않는다.
+            28. 후보의 weatherFactSetId가 가리키는 weatherFactSets 세트에서 해당 날짜의 precipitationProbability가 %d 이상이면 그 날짜는 그 후보에게 비 예보일이다. 강수확률이 제공되지 않은 날짜는 비 예보일로 보지 않는다.
 
             응답의 startTime은 반드시 제주 현지 시각의 24시간제 HH:mm:ss 형식으로 작성한다.
             startTime에 timezone, UTC offset, Z, fractional seconds를 포함하지 않는다.
@@ -55,8 +60,9 @@ public class CourseAiPrompt {
             - 가능한 경우 혼잡도가 낮은 장소와 시간을 고려한다.
             - 선택 스타일을 전체 일정에서 고르게 반영한다.
             - 고정 일정 전후에 적절한 주변 일정을 배치한다.
+            - 비 예보일(규칙 28)에는 candidates[].indoor가 true인 후보를 우선 배치하고 실외 장소 수를 최소화한다. 단 WANT와 고정 일정은 이 규칙보다 우선한다(규칙 16). 비 예보 때문에 실내 후보를 고른 경우 recommendationReason에 그 날짜의 강수확률 %d%% 이상을 근거로 적는다.
             - 응답 스키마에 정의된 값만 JSON으로 반환한다.
-            """;
+            """.formatted(RainyDayRule.PROB_FROM, RainyDayRule.PROB_FROM);
 
     private final ObjectMapper objectMapper;
 
@@ -81,8 +87,7 @@ public class CourseAiPrompt {
         } catch (JsonProcessingException exception) {
             throw new CourseAiException(
                     CourseAiFailureType.INVALID_RESPONSE,
-                    "AI 코스 입력을 JSON으로 변환할 수 없습니다.",
-                    exception
+                    "AI 코스 입력을 JSON으로 변환할 수 없습니다."
             );
         }
     }
@@ -119,13 +124,14 @@ public class CourseAiPrompt {
                 - startTime은 제주 현지 시각의 HH:mm:ss 형식만 사용한다.
                 - startTime에 timezone, UTC offset, Z, fractional seconds를 포함하지 않는다.
                 - recommendationReason은 입력 사실에 근거한 한 줄 문장으로 300자를 넘지 않는다.
+                - 후보 weatherFactSetId 세트의 그 날짜 precipitationProbability가 %d 이상이면 비 예보일이며, 그 날짜에는 indoor=true 후보를 우선 배치한다. WANT와 고정 일정은 이보다 우선한다.
 
                 이전 전체 결과 JSON:
                 %s
 
                 원본 입력 JSON:
                 %s
-                """.formatted(code, message, previousResultJson, inputJson);
+                """.formatted(code, message, RainyDayRule.PROB_FROM, previousResultJson, inputJson);
     }
 
     private String resultJson(CourseAiResultDto result) {
@@ -134,8 +140,7 @@ public class CourseAiPrompt {
         } catch (JsonProcessingException exception) {
             throw new CourseAiException(
                     CourseAiFailureType.INVALID_RESPONSE,
-                    "이전 AI 코스 결과를 교정 요청 JSON으로 변환할 수 없습니다.",
-                    exception
+                    "이전 AI 코스 결과를 교정 요청 JSON으로 변환할 수 없습니다."
             );
         }
     }

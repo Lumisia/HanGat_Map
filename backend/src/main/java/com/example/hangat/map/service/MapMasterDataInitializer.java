@@ -35,6 +35,7 @@ import java.util.List;
  * 스키마가 {@code create-drop}이라 매번 비어 있는 상태에서 채워진다.
  */
 @Component
+@org.springframework.context.annotation.Profile("!batch")
 public class MapMasterDataInitializer implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(MapMasterDataInitializer.class);

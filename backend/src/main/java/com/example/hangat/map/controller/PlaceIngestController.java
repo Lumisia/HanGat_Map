@@ -1,11 +1,12 @@
 package com.example.hangat.map.controller;
 
 import com.example.hangat.common.model.BaseResponse;
-import com.example.hangat.map.service.CongestionIngestService;
+import com.example.hangat.map.congestion.CongestionIngestService;
 import com.example.hangat.map.detail.MenuIngestService;
+import com.example.hangat.map.detail.OverviewIngestService;
 import com.example.hangat.map.detail.PlaceDetailIngestService;
 import com.example.hangat.map.image.PlaceImageIngestService;
-import com.example.hangat.map.service.PlaceIngestService;
+import com.example.hangat.map.place.PlaceIngestService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.context.annotation.Profile;
@@ -23,7 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 개발 프로필에서만 빈이 만들어지므로 운영에는 <b>엔드포인트 자체가 존재하지 않는다</b>.
  *
  * <p>인증·권한 체계가 붙으면(회원 담당) 관리자 권한 검사로 바꾸고 프로필 제한을 걷어낸다.
- * 자동 스케줄(@Scheduled)은 적재 동작이 검증된 뒤에 붙인다.
+ * 혼잡 적재의 자동 스케줄은 CongestionIngestScheduler(운영 03:00 KST)가 맡는다 - 여기 엔드포인트는 dev 수동 실행용.
  */
 @Profile("dev")
 @Tag(name = "적재(개발용)", description = "공공 API에서 데이터를 받아 DB에 넣는다. 개발 프로필에서만 노출된다.")
@@ -38,6 +39,8 @@ public class PlaceIngestController {
     private final com.example.hangat.map.goodprice.GoodPriceIngestService goodPriceIngestService;
     private final com.example.hangat.map.store.StoreIngestService storeIngestService;
     private final MenuIngestService menuIngestService;
+    private final OverviewIngestService overviewIngestService;
+    private final com.example.hangat.map.hiddengem.HiddenGemScoringService hiddenGemScoringService;
 
     public PlaceIngestController(PlaceIngestService placeIngestService,
                                  CongestionIngestService congestionIngestService,
@@ -45,7 +48,9 @@ public class PlaceIngestController {
                                  PlaceImageIngestService placeImageIngestService,
                                  com.example.hangat.map.goodprice.GoodPriceIngestService goodPriceIngestService,
                                  com.example.hangat.map.store.StoreIngestService storeIngestService,
-                                 MenuIngestService menuIngestService) {
+                                 MenuIngestService menuIngestService,
+                                 OverviewIngestService overviewIngestService,
+                                 com.example.hangat.map.hiddengem.HiddenGemScoringService hiddenGemScoringService) {
         this.placeIngestService = placeIngestService;
         this.congestionIngestService = congestionIngestService;
         this.placeDetailIngestService = placeDetailIngestService;
@@ -53,6 +58,8 @@ public class PlaceIngestController {
         this.goodPriceIngestService = goodPriceIngestService;
         this.storeIngestService = storeIngestService;
         this.menuIngestService = menuIngestService;
+        this.overviewIngestService = overviewIngestService;
+        this.hiddenGemScoringService = hiddenGemScoringService;
     }
 
     @Operation(summary = "카페·편의점·마트 적재 (MAP-04)",
@@ -99,6 +106,16 @@ public class PlaceIngestController {
         return BaseResponse.success(menuIngestService.ingest(limit));
     }
 
+    @Operation(summary = "관광지 소개글 적재 (MAP_008)",
+            description = "KTO detailCommon2의 overview를 관광지 overview에 채운다(원문 유지, 태그만 정리). "
+                    + "소개글 없는 관광지부터 limit만큼 처리하고 remaining이 0에 가까워질 때까지 다시 실행하면 이어진다. 관광지 812곳 = 812콜.")
+    @PostMapping("/overviews")
+    public BaseResponse<OverviewIngestService.OverviewIngestResult> ingestOverviews(
+            @RequestParam(name = "limit", required = false,
+                    defaultValue = "" + OverviewIngestService.DEFAULT_LIMIT) int limit) {
+        return BaseResponse.success(overviewIngestService.ingest(limit));
+    }
+
     @Operation(summary = "KTO 관광정보 적재",
             description = "제주 전역 관광정보를 받아 places에 넣는다. 이미 있는 장소는 변경분만 갱신한다. "
                     + "실측 기준 약 2,147건 수신 / 11건은 권역 판정 불가로 제외(추자도 등).")
@@ -114,5 +131,14 @@ public class PlaceIngestController {
     @PostMapping("/congestion")
     public BaseResponse<CongestionIngestService.CongestionIngestResult> ingestCongestion() {
         return BaseResponse.success(congestionIngestService.ingest());
+    }
+
+    @Operation(summary = "숨은 명소 판정 (#숨은 명소)",
+            description = "KTO 등재 관광지 중 관광공사 집중률 집계 대상이 아니고 콘텐츠 품질 점수가 기준 이상인 곳을 "
+                    + "숨은 명소로 표시한다(HiddenGemRule). 최신 집중률 발표분이 없으면 아무것도 바꾸지 않고 skipped 로 답한다. "
+                    + "운영은 혼잡 배치 직후 자동으로 돈다.")
+    @PostMapping("/hidden-gems")
+    public BaseResponse<com.example.hangat.map.hiddengem.HiddenGemScoringService.HiddenGemScoringResult> scoreHiddenGems() {
+        return BaseResponse.success(hiddenGemScoringService.score());
     }
 }

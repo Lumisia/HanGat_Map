@@ -20,8 +20,13 @@ public final class AuthInternalDto {
      */
     public record LoginResult(
                     TokenDto.LoginResponse body,
-                    String rawRefreshToken
+                    String rawRefreshToken,
+                    String rawRecoveryToken
             ) {
+        public LoginResult(TokenDto.LoginResponse body, String rawRefreshToken) {
+            this(body, rawRefreshToken, null);
+        }
+        public boolean recoveryRequired() { return rawRecoveryToken != null; }
     }
 
     /**

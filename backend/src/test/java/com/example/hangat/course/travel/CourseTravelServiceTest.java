@@ -17,7 +17,7 @@ class CourseTravelServiceTest {
 
     @ParameterizedTest
     @EnumSource(Transport.class)
-    void straightDistanceDoesNotEstimateRouteOrDurationForAnyTransport(Transport transport) throws Exception {
+    void straightDistanceProvidesClearlyNonProviderPlanningDurationForAnyTransport(Transport transport) throws Exception {
         TourPlaceDto from = place("100", "성산일출봉", 33.4581, 126.9425);
         TourPlaceDto to = place("200", "비자림", 33.4913, 126.8114);
 
@@ -29,7 +29,7 @@ class CourseTravelServiceTest {
         assertThat(leg.straightDistanceMethod()).isEqualTo(DistanceCalculationMethod.HAVERSINE);
         assertThat(leg.transport()).isEqualTo(transport);
         assertThat(leg.routeDistanceKm()).isNull();
-        assertThat(leg.durationMinutes()).isNull();
+        assertThat(leg.durationMinutes()).isPositive();
         assertThat(leg.routeSourceCode()).isNull();
         assertThat(leg.routeCalculatedAt()).isNull();
         assertThat(leg.hasRouteData()).isFalse();

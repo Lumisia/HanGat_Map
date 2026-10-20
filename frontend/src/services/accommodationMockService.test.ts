@@ -15,7 +15,7 @@ function eastCentredCourse(): CourseResult {
     start_date: '2026-08-13',
     end_date: '2026-08-15',
     people: 2,
-    budget_total: 500000,
+
     transport: 'RENTAL_CAR',
     days: [1, 2, 3].map(dayNo => ({
       day_no: dayNo,

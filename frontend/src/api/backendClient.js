@@ -25,6 +25,7 @@ function applyAccessToken (tokens) {
 }
 
 async function readBaseResponse (response) {
+  if (response.ok && response.status === 204) return null
   let body
   try {
     body = await response.json()
@@ -57,10 +58,15 @@ async function readBaseResponse (response) {
   return body.result
 }
 
-async function rawRequest (path, { method = 'GET', body, token } = {}) {
+async function rawRequest (path, { method = 'GET', body, token, responseType = 'json', timeoutMs = 0 } = {}) {
   const headers = { Accept: 'application/json' }
-  if (body !== undefined) headers['Content-Type'] = 'application/json'
+  const multipart = typeof FormData !== 'undefined' && body instanceof FormData
+  // multipart 경계(boundary)는 브라우저가 생성하므로 Content-Type을 직접 지정하지 않는다.
+  if (body !== undefined && !multipart) headers['Content-Type'] = 'application/json'
+  if (responseType === 'blob') headers.Accept = 'image/jpeg,image/png,image/webp'
   if (token) headers.Authorization = `Bearer ${token}`
+  const controller = timeoutMs > 0 ? new AbortController() : null
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null
 
   let response
   try {
@@ -68,13 +74,27 @@ async function rawRequest (path, { method = 'GET', body, token } = {}) {
       method,
       headers,
       credentials: 'include',
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {})
+      ...(controller ? { signal: controller.signal } : {}),
+      ...(body !== undefined ? { body: multipart ? body : JSON.stringify(body) } : {})
     })
   } catch (error) {
+    if (timer) clearTimeout(timer)
+    if (controller?.signal.aborted) throw new ApiError(0, 'REQUEST_TIMEOUT', '응답 확인 시간이 초과됐어요. 다시 확인해 주세요.', error)
     throw new ApiError(0, 'NETWORK_ERROR', '서버에 연결할 수 없습니다.', error)
   }
 
-  return readBaseResponse(response)
+  try {
+    if (response.ok && responseType === 'blob') {
+      const type = response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase()
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(type)) {
+        throw new ApiError(502, 'INVALID_IMAGE_RESPONSE', '사진 응답 형식을 확인해주세요.')
+      }
+      return await response.blob()
+    }
+    return await readBaseResponse(response)
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 function isJwtError (error) {
@@ -116,6 +136,11 @@ export function getBackendUserId () {
   return authenticatedUserId
 }
 
+/** 파일 요청 중 계정이 바뀌었는지 확인하는 메모리 세션 번호다. 인증 토큰은 아니다. */
+export function getBackendSessionVersion () {
+  return sessionEpoch
+}
+
 /** 기존 목업 콘텐츠의 소유자 키와 실제 회원 ID가 충돌하지 않게 구분한다. */
 export function getBackendDemoUserId () {
   return authenticatedUserId == null ? null : `backend-user-${authenticatedUserId}`
@@ -151,34 +176,62 @@ export function reissueAccessToken () {
  * 인증 API는 만료 시 한 번만 재발급하고 원 요청도 한 번만 다시 보낸다.
  *
  * @param {string} path
- * @param {{ method?: string, body?: unknown, auth?: boolean, retryAuth?: boolean }} [options]
+ * @param {{ method?: string, body?: unknown, auth?: boolean, optionalAuth?: boolean, retryAuth?: boolean, responseType?: 'json'|'blob', sessionBound?: boolean, timeoutMs?: number }} [options]
  */
 export async function apiRequest (path, {
   method = 'GET',
   body,
   auth = false,
-  retryAuth = true
+  optionalAuth = false,
+  retryAuth = true,
+  responseType = 'json',
+  sessionBound = false,
+  timeoutMs = 0
 } = {}) {
+  // 회원이 생성한 READY 코스도 본인 확인이 필요하다. 비회원의 기존 공개 흐름은 유지한다.
+  if (optionalAuth && authenticatedUserId != null) { auth = true; sessionBound = true }
+  const requestedEpoch = sessionEpoch
+  const requestedUserId = authenticatedUserId
+  const checkSession = () => {
+    if (sessionBound && requestedEpoch !== sessionEpoch) {
+      throw new ApiError(401, 'SESSION_CHANGED', '로그인 계정이 변경됐어요. 다시 시도해 주세요.')
+    }
+  }
+  // 사진 전송·조회는 다른 계정의 새 토큰으로 재시도하거나 이전 결과를 반영하지 않는다.
+  const send = async token => {
+    checkSession()
+    if (sessionBound) {
+      let subject = null
+      try {
+        // 다른 탭에서 refresh 쿠키의 계정이 바뀔 수 있다. 서명 검증은 서버가 담당하며,
+        // 여기서는 재전송 전에 JWT의 사용자 식별자가 최초 화면의 계정과 같은지만 확인한다.
+        subject = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).sub
+      } catch { /* 읽을 수 없는 토큰으로 개인 파일을 전송하지 않는다. */ }
+      if (requestedUserId == null || String(subject) !== String(requestedUserId)) {
+        throw new ApiError(401, 'SESSION_CHANGED', '로그인 계정이 변경됐어요. 새로고침 후 다시 시도해 주세요.')
+      }
+    }
+    const result = await rawRequest(path, { method, body, token, responseType, timeoutMs })
+    checkSession()
+    return result
+  }
   if (auth && !accessToken) await reissueAccessToken()
   const attemptedToken = auth ? accessToken : null
 
   try {
-    return await rawRequest(path, {
-      method,
-      body,
-      token: attemptedToken
-    })
+    return await send(attemptedToken)
   } catch (error) {
-    if (!auth || !retryAuth || path === REFRESH_PATH || !isJwtError(error)) {
+    checkSession()
+    if (!auth || !retryAuth || path === REFRESH_PATH || error?.code === 'SESSION_CHANGED' || !isJwtError(error)) {
       throw error
     }
 
     // 다른 요청이 이미 회전을 마쳤다면 refresh를 또 쓰지 않고 새 토큰으로만 재시도한다.
     if (accessToken && accessToken !== attemptedToken) {
-      return rawRequest(path, { method, body, token: accessToken })
+      return send(accessToken)
     }
 
     await reissueAccessToken()
-    return rawRequest(path, { method, body, token: accessToken })
+    return send(accessToken)
   }
 }

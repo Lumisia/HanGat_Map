@@ -53,7 +53,9 @@ public class CrowdForecastService {
         if (rows.isEmpty()) {
             return CrowdForecastResponse.empty();
         }
-        return assemble(rows);
+        // base_at은 적재 시각의 제주 날짜를 그대로 넣은 값이라 UTC 되돌리기를 하지 않는다
+        // (forecast_at만 jejuDayToUtc로 저장된다 - CongestionIngestService 참고).
+        return assemble(latest.get().toLocalDate(), rows);
     }
 
     /**
@@ -63,7 +65,7 @@ public class CrowdForecastService {
      * 배열에 밀어 넣으면 중간에 하루 빠진 장소는 <b>그 뒤가 전부 하루씩 당겨진다</b> -
      * 값이 그럴듯해서 화면에서는 알아챌 수 없고, '가장 한산한 날'이 엉뚱한 날짜로 나온다.
      */
-    private CrowdForecastResponse assemble(List<Object[]> rows) {
+    private CrowdForecastResponse assemble(LocalDate baseDate, List<Object[]> rows) {
         LocalDate from = null;
         LocalDate to = null;
         for (Object[] row : rows) {
@@ -87,8 +89,8 @@ public class CrowdForecastService {
             series.set(index, (BigDecimal) row[2]);
         }
 
-        log.debug("혼잡 예보 조립: 장소 {}곳 × {}일 (from={})", values.size(), days, from);
-        return new CrowdForecastResponse(from, days, values);
+        log.debug("혼잡 예보 조립: 장소 {}곳 × {}일 (발표분 {}, from={})", values.size(), days, baseDate, from);
+        return new CrowdForecastResponse(baseDate, from, days, values);
     }
 
     /** 값이 채워지지 않은 날은 null로 남는다 - 0으로 채우면 '가장 한산한 날'로 뽑힌다. */

@@ -8,7 +8,7 @@
  * 붙여넣기를 막으면 비밀번호 관리자를 못 쓰게 되어 오히려 약한 비밀번호를 쓰게 된다.
  */
 import { computed, ref, watch, useId } from 'vue'
-import { checkPassword, passwordChecklist, estimateStrength, STRENGTH_LABEL, PASSWORD_POLICY } from '../security/passwordPolicy.js'
+import { checkPassword, checkNewPassword, hasAllowedPasswordCharacters, PASSWORD_CHARACTER_MESSAGE, passwordChecklist, estimateStrength, STRENGTH_LABEL, PASSWORD_POLICY } from '../security/passwordPolicy.js'
 import { checkBreached } from '../security/breachCheck.js'
 import AppIcon from '../common/AppIcon.vue'
 
@@ -30,10 +30,61 @@ const uid = useId()
 const inputId = computed(() => `pw-${uid}`)
 const msgId = computed(() => `pwm-${uid}`)
 const reveal = ref(false)
+const inputRejected = ref(false)
+let lastAcceptedValue = props.modelValue || ''
+let selectionBeforeInput = null
+
+watch(() => props.modelValue, v => { lastAcceptedValue = v || '' }, { flush: 'sync' })
+
+function onBeforeInput (event) {
+  selectionBeforeInput = [event.target.selectionStart, event.target.selectionEnd]
+  if (event.data && !hasAllowedPasswordCharacters(event.data) && event.cancelable) {
+    event.preventDefault()
+    inputRejected.value = true
+  }
+}
+
+function onPaste (event) {
+  const text = event.clipboardData?.getData('text')
+  // 일부 문자만 제거하면 사용자가 의도한 비밀번호와 달라지므로 붙여넣기 전체를 거절한다.
+  if (text && !hasAllowedPasswordCharacters(text)) {
+    event.preventDefault()
+    inputRejected.value = true
+  }
+}
+
+function onInput (event) {
+  const input = event.target
+  if (input.value && !hasAllowedPasswordCharacters(input.value)) {
+    // 취소할 수 없는 IME 조합·자동완성 입력도 화면과 모델에 남기지 않는다.
+    input.value = lastAcceptedValue
+    if (selectionBeforeInput?.[0] != null) input.setSelectionRange(...selectionBeforeInput)
+    inputRejected.value = true
+    return
+  }
+  inputRejected.value = false
+  lastAcceptedValue = input.value
+  emit('update:modelValue', input.value)
+}
+
+function onEnter (event) {
+  // 한글 조합을 확정하는 Enter는 로그인/가입 요청으로 전달하지 않는다.
+  if (event.isComposing || event.keyCode === 229) {
+    event.preventDefault()
+    return
+  }
+  emit('enter')
+}
 
 const value = computed(() => props.modelValue || '')
-const local = computed(() => checkPassword(value.value, props.context))
-const checklist = computed(() => passwordChecklist(value.value))
+const isNewPassword = computed(() => props.autocomplete === 'new-password')
+const characterError = computed(() => isNewPassword.value && value.value && !hasAllowedPasswordCharacters(value.value)
+  ? PASSWORD_CHARACTER_MESSAGE : '')
+const local = computed(() => (isNewPassword.value ? checkNewPassword : checkPassword)(value.value, props.context))
+const checklist = computed(() => [
+  ...(isNewPassword.value ? [{ key: 'characters', required: true, label: '영문·숫자·특수문자만 (공백 제외)', pass: hasAllowedPasswordCharacters(value.value) }] : []),
+  ...passwordChecklist(value.value)
+])
 const strength = computed(() => estimateStrength(value.value))
 
 const breach = ref({ status: 'idle', breached: false, count: 0 })
@@ -57,6 +108,8 @@ const barWidth = computed(() => `${((strength.value.score + 1) / 5) * 100}%`)
 const barClass = computed(() => ['s0', 's1', 's2', 's3', 's4'][strength.value.score])
 
 const message = computed(() => {
+  if (inputRejected.value) return { text: PASSWORD_CHARACTER_MESSAGE, kind: 'err' }
+  if (characterError.value) return { text: characterError.value, kind: 'err' }
   if (props.error) return { text: props.error, kind: 'err' }
   if (breach.value.breached) {
     return {
@@ -79,7 +132,7 @@ const message = computed(() => {
       <span v-if="props.required" class="sr-only">(필수)</span>
     </label>
 
-    <div class="fld-box" :class="{ err: !!props.error || breach.breached }">
+    <div class="fld-box" :class="{ err: !!props.error || !!characterError || breach.breached }">
       <!-- 시안: 입력창 왼쪽에 자물쇠 아이콘 -->
       <AppIcon name="lock" class="fld-ico" />
       <input
@@ -91,11 +144,14 @@ const message = computed(() => {
         spellcheck="false"
         autocapitalize="none"
         autocorrect="off"
-        :aria-invalid="props.error ? 'true' : undefined"
+        :aria-invalid="props.error || characterError || breach.breached ? 'true' : undefined"
         :aria-describedby="message || props.showGuidance ? msgId : undefined"
-        @input="emit('update:modelValue', $event.target.value)"
+        @beforeinput="onBeforeInput"
+        @paste="onPaste"
+        @input="onInput"
+        @compositionend="onInput"
         @blur="emit('blur')"
-        @keydown.enter="emit('enter')"
+        @keydown.enter="onEnter"
       >
       <button
         class="peek"

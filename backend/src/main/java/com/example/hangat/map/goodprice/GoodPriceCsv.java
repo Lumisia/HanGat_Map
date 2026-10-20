@@ -1,5 +1,7 @@
 package com.example.hangat.map.goodprice;
 
+import com.example.hangat.map.model.entity.Place;
+
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -26,7 +28,7 @@ public final class GoodPriceCsv {
             if (menuPrices.isEmpty()) {
                 return null;
             }
-            return "대표메뉴: " + String.join(" · ", menuPrices);
+            return Place.GOOD_PRICE_MENU_PREFIX + " " + String.join(" · ", menuPrices);
         }
     }
 

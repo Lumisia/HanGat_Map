@@ -27,7 +27,14 @@ public final class IndoorClassifier {
     }
 
     public static boolean isIndoor(Place place) {
-        String name = place.getName();
+        return place != null && isIndoor(place.getName());
+    }
+
+    /**
+     * 이름만 있는 호출자용(AI 후보 사실 {@code PlaceFact}, 응답 DTO). 같은 키워드 목록을 쓴다 -
+     * 목록을 두 벌 두면 배치 코스와 AI 코스가 같은 장소를 다르게 판정한다.
+     */
+    public static boolean isIndoor(String name) {
         if (name == null) {
             return false;
         }

@@ -19,16 +19,12 @@ class CourseBudgetCalculatorTest {
 
     @Test
     void keepsEmptyCostFactsUnknownInsteadOfConfirmingZeroExpectedCost() {
-        CourseBudgetCalculation result = calculator.calculate(400000, List.of());
+        CourseBudgetCalculation result = calculator.calculate(List.of());
 
         assertThat(result.summary().hasCostData()).isFalse();
-        assertThat(result.summary().budgetTotal()).isEqualTo(400000);
         assertThat(result.summary().verifiedTotal()).isZero();
         assertThat(result.summary().estimatedTotal()).isNull();
         assertThat(result.summary().totalExpected()).isNull();
-        assertThat(result.summary().remainingBudget()).isNull();
-        assertThat(result.summary().usageRate()).isNull();
-        assertThat(result.summary().overBudget()).isNull();
         assertThat(result.totalExpectedMin()).isNull();
         assertThat(result.totalExpectedMax()).isNull();
         assertThat(result.itemCostsByItemId()).isEmpty();
@@ -48,8 +44,7 @@ class CourseBudgetCalculatorTest {
         CourseItemCost unknown = CourseItemCost.unknown(
                 course, second, CostCategory.TRANSPORT);
 
-        CourseBudgetCalculation result = calculator.calculate(
-                200000, List.of(verified, estimated, unknown));
+        CourseBudgetCalculation result = calculator.calculate(List.of(verified, estimated, unknown));
 
         assertThat(result.summary().hasCostData()).isTrue();
         assertThat(result.summary().verifiedTotal()).isEqualTo(16000);
@@ -59,9 +54,6 @@ class CourseBudgetCalculatorTest {
         assertThat(result.totalExpectedMin()).isEqualTo(96000);
         assertThat(result.totalExpectedMax()).isEqualTo(136000);
         assertThat(result.summary().totalExpected()).isEqualTo(136000);
-        assertThat(result.summary().remainingBudget()).isEqualTo(64000);
-        assertThat(result.summary().usageRate()).isEqualByComparingTo("68.00");
-        assertThat(result.summary().overBudget()).isFalse();
         assertThat(result.summary().unknownCount()).isOne();
         assertThat(result.itemCostsByItemId()).containsOnlyKeys(101L, 102L);
         assertThat(result.itemCostsByItemId().get(101L)).singleElement()
@@ -73,28 +65,11 @@ class CourseBudgetCalculatorTest {
     }
 
     @Test
-    void usesExpectedUpperBoundForRemainingUsageAndOverBudgetBoundary() {
-        Course course = course(10L);
-        CourseItemCost estimated = CourseItemCost.estimated(
-                course, null, CostCategory.LODGING, 80000, 120000, "추정 범위");
-
-        CourseBudgetCalculation over = calculator.calculate(100000, List.of(estimated));
-        assertThat(over.summary().remainingBudget()).isEqualTo(-20000);
-        assertThat(over.summary().usageRate()).isEqualByComparingTo("120.00");
-        assertThat(over.summary().overBudget()).isTrue();
-
-        CourseBudgetCalculation boundary = calculator.calculate(120000, List.of(estimated));
-        assertThat(boundary.summary().remainingBudget()).isZero();
-        assertThat(boundary.summary().usageRate()).isEqualByComparingTo("100.00");
-        assertThat(boundary.summary().overBudget()).isFalse();
-    }
-
-    @Test
     void preservesMissingEstimatedBoundWithoutReplacingItWithZero() {
         CourseItemCost estimated = CourseItemCost.estimated(
                 course(10L), null, CostCategory.LODGING, 80000, null, "상한 미확정");
 
-        CourseBudgetCalculation result = calculator.calculate(200000, List.of(estimated));
+        CourseBudgetCalculation result = calculator.calculate(List.of(estimated));
 
         assertThat(result.summary().estimatedMin()).isEqualTo(80000);
         assertThat(result.summary().estimatedMax()).isNull();
@@ -102,14 +77,11 @@ class CourseBudgetCalculatorTest {
         assertThat(result.totalExpectedMin()).isEqualTo(80000);
         assertThat(result.totalExpectedMax()).isNull();
         assertThat(result.summary().totalExpected()).isNull();
-        assertThat(result.summary().overBudget()).isNull();
     }
 
     @Test
     void reportsUnknownRowsWithoutTreatingThemAsFreeCostData() {
-        CourseBudgetCalculation result = calculator.calculate(
-                200000,
-                List.of(CourseItemCost.unknown(
+        CourseBudgetCalculation result = calculator.calculate(List.of(CourseItemCost.unknown(
                         course(10L), null, CostCategory.ACTIVITY)));
 
         assertThat(result.summary().hasCostData()).isFalse();
@@ -127,7 +99,7 @@ class CourseBudgetCalculatorTest {
         when(invalidVerified.getAmountMin()).thenReturn(10000);
         when(invalidVerified.getAmountMax()).thenReturn(12000);
 
-        assertThatThrownBy(() -> calculator.calculate(200000, List.of(invalidVerified)))
+        assertThatThrownBy(() -> calculator.calculate(List.of(invalidVerified)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("VERIFIED");
     }

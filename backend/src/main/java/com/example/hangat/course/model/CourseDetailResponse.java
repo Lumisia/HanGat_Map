@@ -4,7 +4,10 @@ import com.example.hangat.course.model.enums.CourseItemSource;
 import com.example.hangat.course.model.enums.CourseStatus;
 import com.example.hangat.course.model.enums.CourseType;
 import com.example.hangat.course.model.enums.Transport;
+import com.example.hangat.map.model.enums.BusinessStatus;
 import com.example.hangat.map.model.enums.CongestionLevel;
+import com.example.hangat.course.service.IndoorClassifier;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
 
@@ -36,7 +39,6 @@ public record CourseDetailResponse(
         int durationDays,
         String durationText,
         Short people,
-        Integer budgetTotal,
         Transport transport,
         Integer estimatedCostMin,
         Integer estimatedCostMax,
@@ -57,7 +59,8 @@ public record CourseDetailResponse(
          */
         boolean manageable,
         AccommodationDto accommodation,
-        List<DayDto> days
+        List<DayDto> days,
+        CourseResponseDto.BudgetSummaryDto budgetSummary
 ) {
 
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
@@ -75,6 +78,8 @@ public record CourseDetailResponse(
             String placeName,
             String categoryName,
             String regionName,
+            /** 폐업(CLOSED)이면 화면이 '폐업' 배지를 단다 - 저장된 코스에서 지우지는 않는다(PlacePresenceReconciler) */
+            BusinessStatus placeBusinessStatus,
             String imageUrl,
             Double latitude,
             Double longitude,
@@ -98,7 +103,14 @@ public record CourseDetailResponse(
             String recommendationReason,
             /** 스왑으로 바뀐 일정에만 값이 있다. id를 함께 줘야 교체 전 장소로 되짚을 수 있다. */
             Long replacedFromPlaceId,
-            String replacedFromPlaceName
+            String replacedFromPlaceName,
+            List<CourseResponseDto.WeatherFactDto> weather,
+            List<CourseResponseDto.CourseItemCostDto> costs
     ) {
+        /** 실내 여부 - 이름 키워드 휴리스틱(IndoorClassifier). 생성 응답(CourseResponseDto.ItemDto)과 같은 규칙으로 복원 화면도 배지를 그린다 */
+        @JsonProperty(value = "indoor", access = JsonProperty.Access.READ_ONLY)
+        public boolean indoor() {
+            return IndoorClassifier.isIndoor(placeName);
+        }
     }
 }

@@ -122,9 +122,6 @@ public class Course {
     @Column(name = "people", nullable = false)
     private Short people = 1;
 
-    /** 총 예산(원). 조건 미입력이면 NULL - 0원과 구분해야 하므로 기본값을 두지 않는다. */
-    @Column(name = "budget_total")
-    private Integer budgetTotal;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "transport", length = 20, nullable = false)
@@ -262,6 +259,23 @@ public class Course {
         this.estimatedCostMin = estimatedCostMin;
         this.estimatedCostMax = estimatedCostMax;
         this.averageCongestionRate = averageCongestionRate;
+    }
+
+    /**
+     * 회원의 비동기 생성 결과를 본인 소유로 지정한다.
+     * 저장(SAVED)이나 여행 확정은 하지 않는다.
+     */
+    public void assignGenerationOwner(User owner) {
+        if (owner == null
+                || this.user != null
+                || this.status != CourseStatus.READY
+                || this.courseType != CourseType.USER) {
+            throw new IllegalStateException(
+                    "생성 결과의 소유자를 지정할 수 없습니다."
+            );
+        }
+
+        this.user = owner;
     }
 
     @PrePersist

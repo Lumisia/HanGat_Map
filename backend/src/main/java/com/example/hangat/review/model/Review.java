@@ -25,6 +25,8 @@ import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 
 /**
  * 방문 후기(명세서 28.0) - MAP-09.
@@ -82,10 +84,34 @@ public class Review {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
+    /** 작성자가 실제 내용을 변경한 시각. 내부 갱신·삭제로는 설정하지 않는다. */
+    @Column(name = "edited_at")
+    private LocalDateTime editedAt;
+
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
     // ────────────────────────── 후기 상태 변경 ──────────────────────────
+
+    /** 수정해도 최초 작성 시각 기준의 7일 기한은 연장되지 않는다. */
+    public boolean canEditAt(LocalDateTime now) {
+        return status == ReviewStatus.ACTIVE && createdAt != null
+                && now.isBefore(createdAt.plusDays(7));
+    }
+
+    /** 브라우저가 서버의 날짜를 다른 시간대로 해석하지 않도록 오프셋을 포함한다. */
+    public OffsetDateTime editableUntil() {
+        return createdAt == null ? null
+                : createdAt.plusDays(7).atZone(ZoneId.systemDefault()).toOffsetDateTime();
+    }
+
+    /** 서비스가 변경 여부·권한·기한을 확인한 뒤에만 호출한다. 사진만 바꾼 경우도 포함한다. */
+    public void edit(Byte rating, CongestionLevel report, String content, LocalDateTime now) {
+        this.rating = rating;
+        this.congestionReport = report;
+        this.content = content;
+        this.editedAt = now;
+    }
 
     /** 논리 삭제 - 물리 DELETE 금지(명세서) */
     public void delete() {

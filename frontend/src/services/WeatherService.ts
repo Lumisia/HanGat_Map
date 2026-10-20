@@ -7,7 +7,7 @@
  */
 import { apiGet } from './apiClient'
 import { weatherOn } from '../utils/crowd.js'
-import { at, fmt } from '../utils/date.js'
+import { at, fmt, iso } from '../utils/date.js'
 
 export interface DailyWeather {
   /** 8/17 (월) */
@@ -17,6 +17,11 @@ export interface DailyWeather {
   /** 최고기온. 예보가 없는 날은 null - 0°로 지어내지 않는다 */
   temperature: number | null
   description: string
+  /** 아래 넷은 원자료 그대로(메인 날씨 띠가 선 아이콘·부제를 만드는 데 쓴다, 2026-09-18). 샘플 폴백은 값이 없으면 null */
+  date: string
+  sky: string | null
+  minTemp: number | null
+  rainProb: number | null
 }
 
 export interface WeeklyForecast {
@@ -60,6 +65,10 @@ export const WeatherService = {
           day: fmt(new Date(item.date)),
           icon: iconOf(item.sky, item.rainProb),
           temperature: item.maxTemp,
+          date: item.date,
+          sky: item.sky,
+          minTemp: item.minTemp,
+          rainProb: item.rainProb,
           description: [
             item.sky ?? '예보 준비 중',
             item.minTemp !== null ? `최저 ${item.minTemp}°` : null,
@@ -82,6 +91,10 @@ function sampleForecast (): DailyWeather[] {
       day: fmt(date),
       icon: ICON[w.k] ?? '☁️',
       temperature: w.t,
+      date: iso(date),
+      sky: w.k,
+      minTemp: w.tmin,
+      rainProb: null,
       description: `${w.k} · 최저 ${w.tmin}°`
     }
   })

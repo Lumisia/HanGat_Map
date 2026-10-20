@@ -45,17 +45,23 @@ public class CourseSwapService {
     private final PlaceRepository placeRepository;
     private final CongestionService congestionService;
     private final CourseTravelCalculator travelCalculator;
+    private final com.example.hangat.course.CourseRetentionPolicy retentionPolicy;
+    private final com.example.hangat.course.CourseBudgetService budgets;
 
     public CourseSwapService(CourseRepository courseRepository,
                              CourseItemRepository itemRepository,
                              PlaceRepository placeRepository,
                              CongestionService congestionService,
-                             CourseTravelCalculator travelCalculator) {
+                             CourseTravelCalculator travelCalculator,
+                             com.example.hangat.course.CourseRetentionPolicy retentionPolicy,
+                             com.example.hangat.course.CourseBudgetService budgets) {
         this.courseRepository = courseRepository;
         this.itemRepository = itemRepository;
         this.placeRepository = placeRepository;
         this.congestionService = congestionService;
         this.travelCalculator = travelCalculator;
+        this.retentionPolicy = retentionPolicy;
+        this.budgets = budgets;
     }
 
     /**
@@ -66,6 +72,7 @@ public class CourseSwapService {
     public CourseSwapResponse swap(Long courseId, Long itemId, Long newPlaceId, Long authUserId) {
         Course course = courseRepository.findById(courseId)
                 .orElseThrow(() -> new BaseException(BaseResponseStatus.COURSE_NOT_FOUND, courseId));
+        retentionPolicy.requireAvailable(course);
         if (course.getStatus() == CourseStatus.DELETED) {
             throw new BaseException(BaseResponseStatus.COURSE_NOT_FOUND, courseId);
         }
@@ -112,6 +119,8 @@ public class CourseSwapService {
         Map<LocalDate, Map<Long, Double>> ratesByDate = new HashMap<>();
         BigDecimal average = recalculateAverageRate(items, ratesByDate);
         course.updateAggregates(course.getEstimatedCostMin(), course.getEstimatedCostMax(), average);
+        budgets.clearItemCosts(courseId, itemId);
+        var budget = budgets.calculateAndCache(courseId);
 
         return new CourseSwapResponse(
                 course.getId(),
@@ -119,9 +128,12 @@ public class CourseSwapService {
                 average == null ? null : CongestionLevel.from(average),
                 average == null ? null : CongestionLevel.from(average).label(),
                 updated.stream()
-                        .map(item -> CourseSwapResponse.SwappedItem.of(item, rateOf(item, ratesByDate)))
+                        .map(item -> CourseSwapResponse.SwappedItem.of(item, rateOf(item, ratesByDate),
+                                budget.itemCostsByItemId().getOrDefault(item.getId(), List.of()).stream()
+                                        .map(com.example.hangat.course.CourseResponseAssembler::toCostDto).toList()))
                         .toList(),
-                replacedName + " 대신 " + newPlace.getName() + "으로 바꾸고 동선을 다시 계산했어요");
+                replacedName + " 대신 " + newPlace.getName() + "으로 바꾸고 동선을 다시 계산했어요",
+                com.example.hangat.course.CourseResponseAssembler.toBudgetSummary(budget));
     }
 
     /**

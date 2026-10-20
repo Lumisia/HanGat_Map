@@ -9,16 +9,16 @@ vi.mock('../../api/backendClient.js', () => ({
   BACKEND_BASE_URL: 'http://localhost:8080'
 }))
 
-import ReviewApiService from './ReviewApiService'
+import ReviewApiService, { failText, LOGIN_EXPIRED_TEXT } from './ReviewApiService'
 import { apiRequest, reissueAccessToken } from '../../api/backendClient.js'
 
 /** 값은 2026-08-31 실응답에서 가져왔다 */
 const REAL_PAGE = {
   content: [{
-    id: 1, userId: 1, rating: 5, congestionReport: 'QUIET',
+    id: 1, userId: 1, nickname: '여행자', profileImageUrl: '/users/1/profile-image/12345678-1234-1234-1234-123456789abc.png', rating: 5, congestionReport: 'QUIET',
     content: 'good place', imageUrls: [], createdAt: '2026-08-31T01:37:06.580069'
   }],
-  number: 0, size: 6, totalPages: 1, totalElements: 1
+  number: 0, size: 10, totalPages: 1, totalElements: 1
 }
 
 function mockFetch (handler: (url: string, init?: RequestInit) => unknown) {
@@ -39,9 +39,10 @@ describe('후기 목록', () => {
     const page = await ReviewApiService.getReviews(24)
 
     expect(page.content[0].rating).toBe(5)
+    expect(page.content[0].profileImageUrl).toBe('/users/1/profile-image/12345678-1234-1234-1234-123456789abc.png')
     expect(page.totalElements).toBe(1)
     const call = (fetch as ReturnType<typeof vi.fn>).mock.calls[0]
-    expect(call[0]).toContain('/places/24/reviews?page=0&size=6')
+    expect(call[0]).toContain('/places/24/reviews?page=0&size=10')
   })
 })
 
@@ -95,5 +96,73 @@ describe('사진 업로드', () => {
 
     await expect(ReviewApiService.uploadPhotos([file]))
       .rejects.toThrow('최대 5장')
+  })
+
+  /* 실패 응답의 모양이 제각각이다 - 어느 경우에도 영어 오류가 토스트에 뜨지 않아야 한다 */
+  const mockFail = (status: number, body: () => unknown) =>
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status, json: async () => body() })))
+
+  it('검증 실패(400 JSON)는 서버 문구를 그대로 쓴다', async () => {
+    mockFail(400, () => ({ success: false, code: 3000, message: '입력값을 확인해주세요.' }))
+    await expect(ReviewApiService.uploadPhotos([file])).rejects.toThrow('입력값을 확인해주세요.')
+  })
+
+  it('5MB 초과(413, 본문에 message 없음)는 크기를 줄이라고 안내한다', async () => {
+    mockFail(413, () => ({ timestamp: '2026-09-13T00:00:00', status: 413, error: 'Payload Too Large', path: '/reviews/photos' }))
+    await expect(ReviewApiService.uploadPhotos([file])).rejects.toThrow('5MB 이하로 줄여 주세요')
+  })
+
+  it('JSON 이 아닌 본문(빈 413·프록시 HTML)이어도 우리 문구로 던진다 - 예전엔 "Unexpected end of JSON input" 이 떴다', async () => {
+    mockFail(413, () => { throw new SyntaxError('Unexpected end of JSON input') })
+    await expect(ReviewApiService.uploadPhotos([file])).rejects.toThrow('5MB 이하로 줄여 주세요')
+
+    mockFail(502, () => { throw new SyntaxError('Unexpected token <') })
+    await expect(ReviewApiService.uploadPhotos([file])).rejects.toThrow('잠시 후 다시 시도해 주세요')
+  })
+
+  it('연결이 끊겨 fetch 가 실패하면 영어 대신 인터넷 연결을 확인하라고 한다', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
+    await expect(ReviewApiService.uploadPhotos([file])).rejects.toThrow('인터넷 연결을 확인해 주세요')
+  })
+
+  it('재발급 뒤에도 401 이면 서버 봉투("JWT 토큰 유효하지 않음") 대신 로그인 만료 문구', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 401, json: async () => ({ success: false, code: 3002, message: 'JWT 토큰 유효하지 않음' }) })))
+    await expect(ReviewApiService.uploadPhotos([file])).rejects.toThrow(LOGIN_EXPIRED_TEXT)
+  })
+})
+
+/* 등록·삭제 실패 토스트 - 서버 원문·숫자·영어가 사용자에게 안 보이게(2026-09-19) */
+describe('failText', () => {
+  const api = (status: number, code: number | string, message: string) => ({ status, code, message })
+
+  it('로그인 만료(401 · 3001 · 3002)는 다시 로그인하라고 한다', () => {
+    expect(failText(api(401, 3002, 'JWT 토큰 유효하지 않음'), '후기를 남기지 못했어요')).toBe(LOGIN_EXPIRED_TEXT)
+    expect(failText(api(401, 3001, 'JWT 토큰 만료'), '후기를 남기지 못했어요')).toBe(LOGIN_EXPIRED_TEXT)
+  })
+
+  it('업무 오류(3xxx)는 서버 문구 그대로 - 별점(3213, 백엔드 문구를 화면 현실에 맞춤) · 본인만 · 5장 · 입력값 · 없는 장소', () => {
+    expect(failText(api(400, 3213, '별점을 선택해 주세요.'), '후기를 남기지 못했어요')).toBe('별점을 선택해 주세요.')
+    expect(failText(api(400, 3212, '본인이 작성한 후기만 수정하거나 삭제할 수 있습니다.'), '후기를 삭제하지 못했어요'))
+      .toBe('본인이 작성한 후기만 수정하거나 삭제할 수 있습니다.')
+    expect(failText(api(400, 3214, '후기 사진은 최대 5장까지입니다.'), '후기를 남기지 못했어요')).toBe('후기 사진은 최대 5장까지입니다.')
+    expect(failText(api(400, 3000, '입력값을 확인해주세요.'), '후기를 남기지 못했어요')).toBe('입력값을 확인해주세요.')
+    expect(failText(api(400, 3201, '존재하지 않는 장소입니다.'), '후기를 남기지 못했어요')).toBe('존재하지 않는 장소입니다.')
+  })
+
+  it('서버 장애(5xxx)와 응답 형식 오류는 내부 사정을 보이지 않고 기본 문구로 통일', () => {
+    expect(failText(api(500, 5001, '데이터베이스 연결 및 처리 오류'), '후기를 삭제하지 못했어요')).toBe('후기를 삭제하지 못했어요 · 잠시 후 다시 시도해 주세요')
+    expect(failText(api(500, 5002, '외부 API 호출에 실패했습니다.'), '후기를 남기지 못했어요')).toBe('후기를 남기지 못했어요 · 잠시 후 다시 시도해 주세요')
+    expect(failText(api(502, 'INVALID_RESPONSE', '서버 응답 형식을 확인해주세요.'), '후기를 남기지 못했어요')).toBe('후기를 남기지 못했어요 · 잠시 후 다시 시도해 주세요')
+    expect(failText(api(400, 'HTTP_ERROR', '요청을 처리하지 못했습니다.'), '후기를 남기지 못했어요')).toBe('후기를 남기지 못했어요 · 잠시 후 다시 시도해 주세요')
+  })
+
+  it('연결 실패·시간 초과는 인터넷 연결을 확인하라고 한다', () => {
+    expect(failText(api(0, 'NETWORK_ERROR', '서버에 연결할 수 없습니다.'), '후기를 남기지 못했어요')).toBe('후기를 남기지 못했어요 · 인터넷 연결을 확인해 주세요')
+  })
+
+  it('사진 업로드가 만든 우리 문구(한글)는 그대로, 브라우저 예외 영어와 빈 오류는 기본 문구', () => {
+    expect(failText(new Error('사진이 너무 커서 올리지 못했어요 · 5MB 이하로 줄여 주세요'), '후기를 남기지 못했어요')).toBe('사진이 너무 커서 올리지 못했어요 · 5MB 이하로 줄여 주세요')
+    expect(failText(new SyntaxError('Unexpected token <'), '후기를 남기지 못했어요')).toBe('후기를 남기지 못했어요 · 잠시 후 다시 시도해 주세요')
+    expect(failText(null, '후기를 남기지 못했어요')).toBe('후기를 남기지 못했어요 · 잠시 후 다시 시도해 주세요')
   })
 })

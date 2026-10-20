@@ -18,6 +18,13 @@ class CourseCandidateStyleHintTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @ParameterizedTest
+    @CsvSource({"FD050200,CAFE","NA010200,NATURE","EX010100,LOCAL","LS010300,ACTIVITY","VE030300,WITH_KIDS","VE010200,PHOTO"})
+    void resolvesCurrentTourismTaxonomy(String tag,String style)throws Exception {
+        var place=objectMapper.readValue("{\"contentid\":\"1\",\"lclsSystm3\":\""+tag+"\"}",TourPlaceDto.class);
+        assertThat(TourPlaceStyleHintResolver.resolve(place)).contains(style);
+    }
+
+    @ParameterizedTest
     @CsvSource({
             "A01,,NATURE",
             "A03,,ACTIVITY",

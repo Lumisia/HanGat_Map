@@ -25,6 +25,7 @@ public class TourApiService {
     private final String baseUrl;
     private final String serviceKey;
     private final RestClient restClient;
+    private final KtoRequests requests;
 
     protected TourApiService() {
         this(RestClient.create(), null, null);
@@ -33,18 +34,27 @@ public class TourApiService {
     @Autowired
     public TourApiService(
             @Value("${tour-api.base-url}") String baseUrl,
-            @Value("${tour-api.service-key}") String serviceKey
+            @Value("${tour-api.service-key}") String serviceKey,
+            @Value("${tour-api.connect-timeout:3s}") java.time.Duration connectTimeout,
+            @Value("${tour-api.read-timeout:10s}") java.time.Duration readTimeout
     ) {
-        this(RestClient.create(), baseUrl, serviceKey);
+        this(KtoRequests.client(connectTimeout, readTimeout), baseUrl, serviceKey,
+                new KtoRequests(connectTimeout.plus(readTimeout), Thread::sleep));
     }
 
     TourApiService(RestClient restClient, String baseUrl, String serviceKey) {
+        this(restClient, baseUrl, serviceKey, new KtoRequests(java.time.Duration.ofSeconds(13), Thread::sleep));
+    }
+
+    TourApiService(RestClient restClient, String baseUrl, String serviceKey, KtoRequests requests) {
         this.restClient = restClient;
         this.baseUrl = baseUrl;
         this.serviceKey = serviceKey;
+        this.requests = requests;
     }
 
     public List<TourPlaceDto> getTourPlaces() {
+        if (serviceKey == null || serviceKey.isBlank() || baseUrl == null || baseUrl.isBlank()) throw new KtoApiException(false);
         Map<String, TourPlaceDto> uniquePlaces = new LinkedHashMap<>();
         int fetchedCount = 0;
 
@@ -76,6 +86,10 @@ public class TourApiService {
     }
 
     private TourApiResponseDto.Body fetchPage(int pageNo) {
+        return requests.execute(pageNo, () -> fetchOnce(pageNo));
+    }
+
+    private TourApiResponseDto.Body fetchOnce(int pageNo) {
         URI uri = UriComponentsBuilder
                 .fromUriString(baseUrl)
                 .queryParam("serviceKey", "{serviceKey}")
@@ -95,8 +109,9 @@ public class TourApiService {
                 .retrieve()
                 .body(TourApiResponseDto.class);
 
-        if (result == null || result.getResponse() == null) {
-            return null;
+        if (result == null || result.getResponse() == null || result.getResponse().getHeader() == null
+                || !"0000".equals(result.getResponse().getHeader().getResultCode()) || result.getResponse().getBody() == null) {
+            throw new IllegalArgumentException("KTO response contract");
         }
         return result.getResponse().getBody();
     }

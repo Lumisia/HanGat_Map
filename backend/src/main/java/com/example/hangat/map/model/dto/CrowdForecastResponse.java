@@ -25,6 +25,16 @@ import java.util.Map;
 @Getter
 public class CrowdForecastResponse {
 
+    /**
+     * 발표분을 받아 온 날(제주 기준). <b>{@code from}과 다른 것이 정상이다.</b>
+     *
+     * <p>적재 배치는 새벽 3시에 도는데 그 시각 관광공사 API는 아직 <b>어제부터</b> 시작하는 창을 준다
+     * (2026-09 실측: 03시 응답은 D-1부터, 같은 날 저녁 응답은 D부터). 그래서 정상 적재에서도
+     * {@code from}은 늘 어제다. <b>예보가 묵었는지는 창 시작일이 아니라 이 발표일로 판단해야 한다</b> -
+     * {@code from}으로 보면 매일 '갱신 대기'가 뜬다.
+     */
+    private final LocalDate baseDate;
+
     /** 첫 예보일. <b>제주 기준 날짜</b>다 - DB는 UTC로 저장하지만 화면 계약은 현지 날짜다. */
     private final LocalDate from;
 
@@ -39,7 +49,9 @@ public class CrowdForecastResponse {
      */
     private final Map<String, List<BigDecimal>> values;
 
-    public CrowdForecastResponse(LocalDate from, int days, Map<String, List<BigDecimal>> values) {
+    public CrowdForecastResponse(LocalDate baseDate, LocalDate from, int days,
+                                 Map<String, List<BigDecimal>> values) {
+        this.baseDate = baseDate;
         this.from = from;
         this.days = days;
         this.values = values;
@@ -47,6 +59,6 @@ public class CrowdForecastResponse {
 
     /** 예보가 한 건도 없을 때. 화면 전체가 '정보 없음'이 된다 - 빈 응답이 오류는 아니다. */
     public static CrowdForecastResponse empty() {
-        return new CrowdForecastResponse(null, 0, Map.of());
+        return new CrowdForecastResponse(null, null, 0, Map.of());
     }
 }

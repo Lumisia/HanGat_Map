@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { AccommodationRecommendation } from '../../assets/types/course'
 
-defineProps<{ items: AccommodationRecommendation[]; loading: boolean; error?: string }>()
+defineProps<{ items: AccommodationRecommendation[]; loading: boolean; saving?: boolean; error?: string }>()
 defineEmits<{ select: [value: AccommodationRecommendation] }>()
 const regionLabel = { EAST: '동부', WEST: '서부', SOUTH: '남부', NORTH: '북부' }
 </script>
@@ -17,7 +17,7 @@ const regionLabel = { EAST: '동부', WEST: '서부', SOUTH: '남부', NORTH: '�
     <article v-for="item in items" v-else :key="`${item.source_code}:${item.source_place_id}`">
       <img :src="item.image_url || '/images/placeholder.svg'" :alt="item.place_name">
       <div><b>{{ item.place_name }}</b><span>{{ item.address }}</span><small>{{ item.region ? regionLabel[item.region] : '' }} · {{ item.recommendation_reason }}</small></div>
-      <button type="button" @click="$emit('select', item)">이 숙소 선택</button>
+      <button type="button" :disabled="saving" @click="$emit('select', item)">{{ saving ? '숙소 저장 중…' : '이 숙소 선택' }}</button>
     </article>
   </section>
 </template>

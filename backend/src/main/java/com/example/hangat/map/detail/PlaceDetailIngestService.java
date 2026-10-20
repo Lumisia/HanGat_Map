@@ -48,7 +48,7 @@ public class PlaceDetailIngestService {
      * 적재 때 KTO 12·14·15·28을 TOURIST 하나로 합쳐서 원래 타입을 복원할 수 없다.
      */
     private static final Map<String, String> CATEGORY_TO_TYPE = Map.of(
-            "TOURIST", "12", "LODGING", "32", "SHOPPING", "38", "FOOD", "39");
+            "TOURIST", "12", "LODGING", "32", "SHOPPING", "38", "FOOD", "39", "CAFE", "39");   // KTO 카페는 음식점(39) 세부분류
 
     private final PublicApiClient client;
     private final PlaceRepository placeRepository;

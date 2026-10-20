@@ -39,6 +39,16 @@ public class AuthController {
 
 
     // ────────────────────────── 가입 및 로그인 ──────────────────────────
+    @PostMapping("/demo-login")
+    @Operation(summary = "공개 데모 계정 로그인")
+    public BaseResponse<TokenDto.LoginResponse> demoLogin(HttpServletRequest request, HttpServletResponse response) {
+        requestLimiter.checkDemoLogin(clientIp(request));
+        var result = authService.loginDemo();
+        cookieManager.setRefreshCookie(response, result.rawRefreshToken());
+        response.setHeader("Cache-Control", "no-store");
+        return BaseResponse.success(result.body());
+    }
+
     @PostMapping("/signup")
     @Operation(summary = "회원가입", description = "가입 후 인증 메일을 보낸다.")
     public BaseResponse<UserDto.UserResponse> signup(@Valid @RequestBody AuthDto.SignupRequest request) {
@@ -47,7 +57,7 @@ public class AuthController {
 
     @PostMapping("/login")
     @Operation(summary = "로그인", description = "이메일과 비밀번호로 로그인한다.")
-    public BaseResponse<TokenDto.LoginResponse> login(
+    public BaseResponse<?> login(
             @Valid
             @RequestBody
             AuthDto.LoginRequest request,
@@ -59,6 +69,13 @@ public class AuthController {
                 request.email()
         );
         AuthInternalDto.LoginResult result = authService.login(request);
+        response.setHeader("Cache-Control", "no-store");
+        if (result.recoveryRequired()) {
+            cookieManager.clearRefreshCookie(response);
+            cookieManager.setRecoveryCookie(response, result.rawRecoveryToken());
+            return BaseResponse.success(java.util.Map.of("recoveryRequired", true));
+        }
+        cookieManager.clearRecoveryCookie(response);
         cookieManager.setRefreshCookie(
                 response,
                 result.rawRefreshToken()

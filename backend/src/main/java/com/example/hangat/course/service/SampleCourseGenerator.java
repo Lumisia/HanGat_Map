@@ -19,6 +19,7 @@ import com.example.hangat.domain.weather.model.enums.WeatherGranularity;
 import com.example.hangat.domain.weather.repository.WeatherForecastRepository;
 import com.example.hangat.map.model.entity.CongestionForecast;
 import com.example.hangat.map.model.entity.Place;
+import com.example.hangat.map.model.enums.BusinessStatus;
 import com.example.hangat.map.model.enums.CongestionLevel;
 import com.example.hangat.map.repository.PlaceRepository;
 import com.example.hangat.map.service.PlaceNameNormalizer;
@@ -63,8 +64,7 @@ public class SampleCourseGenerator {
     private static final int SPOTS_PER_DAY = 3;
     /** 카드 수 = 서로 다른 권역 수. */
     private static final int REGIONS_TO_PICK = 3;
-    /** 이 이상이면 그날은 "비 예보"로 보고 실내 우선 배치. 기상청 강수확률(%) 기준. */
-    private static final int RAINY_PROB_FROM = 60;
+    // 비 예보 임계값과 실내 사유 문구는 RainyDayRule 하나만 쓴다 - AI 생성·폴백과 같은 값이어야 한다.
     /** 동선 묶기 전 저혼잡 후보 풀 크기 - 너무 크면 동선이 저혼잡을 이기고, 너무 작으면 다 몰린다. */
     private static final int ROUTE_POOL_SIZE = 10;
 
@@ -103,6 +103,11 @@ public class SampleCourseGenerator {
     /** 한 번의 배치 결과 - 로그·수동 실행 응답용. */
     public record RunSummary(LocalDate startDate, List<String> readyRegions, List<String> failedRegions,
                              String skippedReason) {
+        /** 후보 권역의 중간 실패가 있어도 대체 권역으로 목표 수를 채웠으면 성공이다. */
+        public boolean isComplete() {
+            return skippedReason == null && readyRegions.size() >= REGIONS_TO_PICK;
+        }
+
         static RunSummary skipped(LocalDate date, String reason) {
             return new RunSummary(date, List.of(), List.of(), reason);
         }
@@ -180,6 +185,7 @@ public class SampleCourseGenerator {
         Map<String, List<Place>> byRegion = new HashMap<>();
         for (Place place : placeRepository.findAllById(forecasts.keySet())) {
             if (!TOURIST_CODE.equals(place.getPrimaryCategory().getCode())) continue;
+            if (place.getBusinessStatus() == BusinessStatus.CLOSED) continue;   // 폐업은 샘플에 안 넣는다
             if (place.getLatitude() == null || place.getLongitude() == null) continue;
             byRegion.computeIfAbsent(place.getRegion().getCode(), k -> new ArrayList<>()).add(place);
         }
@@ -272,7 +278,7 @@ public class SampleCourseGenerator {
     }
 
     private boolean isRainy(DailyWeather day) {
-        return day != null && day.rainProb() != null && day.rainProb() >= RAINY_PROB_FROM;
+        return day != null && RainyDayRule.isRainy(day.rainProb());
     }
 
     /**
@@ -290,6 +296,7 @@ public class SampleCourseGenerator {
 
         return placeRepository.findAllById(forecasts.keySet()).stream()
                 .filter(p -> TOURIST_CODE.equals(p.getPrimaryCategory().getCode()))
+                .filter(p -> p.getBusinessStatus() != BusinessStatus.CLOSED)
                 .filter(p -> regionCode.equals(p.getRegion().getCode()))
                 .filter(p -> p.getLatitude() != null && p.getLongitude() != null)
                 .filter(p -> !used.contains(p.getId()))
@@ -371,11 +378,11 @@ public class SampleCourseGenerator {
 
     /** 근거 문구 - 한산 장소 카드(MainService)와 같은 우선순위 + 날씨 사유 추가. */
     private String reasonFor(Place place, CongestionForecast forecast, boolean rainy, boolean indoor) {
-        if (rainy && indoor) return "비 예보가 있어 실내 위주로 담았어요";
+        if (rainy && indoor) return RainyDayRule.INDOOR_REASON;
         if (place.isGoodPrice()) return "착한가격업소 검증가";
         if (place.isHiddenGem()) return "덜 알려진 숨은 명소";
         if (CongestionLevel.from(forecast.getRate()) == CongestionLevel.QUIET) {
-            return "이 날짜 혼잡 예보가 여유예요";
+            return "이 날짜 혼잡 예보가 한산이에요";
         }
         return "인기 명소보다 한산한 편이에요";
     }

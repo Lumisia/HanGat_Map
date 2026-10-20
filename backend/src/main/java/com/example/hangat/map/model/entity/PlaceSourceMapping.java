@@ -120,6 +120,16 @@ public class PlaceSourceMapping {
         this.lastSyncedAt = LocalDateTime.now();
     }
 
+    /** 이번 적재 목록에 없었다 - 행은 남기고 비활성으로. 다음 적재에도 없으면 장소가 CLOSED 된다. */
+    public void deactivate() {
+        this.isActive = false;
+    }
+
+    /** 출처에 다시 나타났다. */
+    public void activate() {
+        this.isActive = true;
+    }
+
     @PrePersist
     void onCreate() {
         LocalDateTime now = LocalDateTime.now();

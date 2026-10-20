@@ -26,7 +26,8 @@ import java.util.List;
 import java.util.Locale;
 
 @Service
-@RequiredArgsConstructor
+@lombok.extern.slf4j.Slf4j
+@RequiredArgsConstructor(onConstructor_ = @org.springframework.beans.factory.annotation.Autowired)
 public class CourseService {
 
     private final TourApiService tourApiService;
@@ -37,21 +38,130 @@ public class CourseService {
     private final CoursePersistenceService coursePersistenceService;
     private final CourseBudgetService courseBudgetService;
     private final CourseResponseAssembler courseResponseAssembler;
+    private final java.util.Optional<CourseDbCandidateService> dbCandidateService;
+    private final CourseDatePolicy courseDatePolicy;
+    private java.util.Optional<CourseAccommodationService> accommodationService = java.util.Optional.empty();
 
+    // batch에서는 API 전용 숙소 서비스를 제외한다. API 실행 시에는 기존대로 주입한다.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setAccommodationService(CourseAccommodationService accommodationService) {
+        this.accommodationService = java.util.Optional.of(accommodationService);
+    }
+
+    public CourseService(TourApiService tourApiService, CongestionApiService congestionApiService,
+            CourseCandidateShortlistService courseCandidateShortlistService, CourseAiPreparationService courseAiPreparationService,
+            CourseAiGenerationService courseAiGenerationService, CoursePersistenceService coursePersistenceService,
+            CourseBudgetService courseBudgetService, CourseResponseAssembler courseResponseAssembler) {
+        this(tourApiService, congestionApiService, courseCandidateShortlistService, courseAiPreparationService,
+                courseAiGenerationService, coursePersistenceService, courseBudgetService, courseResponseAssembler,
+                java.util.Optional.empty(), CourseDatePolicy.legacyTestCompatibility());
+    }
+
+    CourseService(TourApiService tourApiService, CongestionApiService congestionApiService,
+            CourseCandidateShortlistService courseCandidateShortlistService, CourseAiPreparationService courseAiPreparationService,
+            CourseAiGenerationService courseAiGenerationService, CoursePersistenceService coursePersistenceService,
+            CourseBudgetService courseBudgetService, CourseResponseAssembler courseResponseAssembler,
+            java.util.Optional<CourseDbCandidateService> dbCandidateService) {
+        this(tourApiService, congestionApiService, courseCandidateShortlistService, courseAiPreparationService,
+                courseAiGenerationService, coursePersistenceService, courseBudgetService, courseResponseAssembler,
+                dbCandidateService, CourseDatePolicy.legacyTestCompatibility());
+    }
+
+    /**
+     * 비회원의 기존 동기 생성 경로.
+     */
     public CourseResponseDto createCourse(CourseRequestDto request) {
+        ComputedCourse computed = computeCourse(request);
+        if (request.getAccommodation() == null) {
+            return persistComputedCourse(request, computed);
+        }
+        CourseAccommodationService accommodations = accommodationService.orElseThrow(
+                () -> new IllegalStateException("숙소 검증 서비스를 사용할 수 없습니다."));
+        var verified = accommodations.verifyGeneratedAccommodation(request.getAccommodation(), computed);
+        return persistComputedCourse(request, computed, verified);
+    }
+    /**
+     * 외부 조회 / AI 호출 / 방문 순서 최적화.
+     * 이 단계 전체를 DB 트랜잭션으로 감싸지 않는다.
+     */
+    public ComputedCourse computeCourse(CourseRequestDto request) {
+        checkCancelled();
         PreparedCourse prepared = prepareCourse(request);
-        CourseAiResultDto result = courseAiGenerationService.generate(prepared.input());
-        result = CourseVisitOrderOptimizer.optimize(request, prepared.facts(), result);
-        CoursePersistenceResult persistence = coursePersistenceService.persist(
+
+        checkCancelled();
+
+        CourseAiResultDto result =
+                courseAiGenerationService.generate(prepared.input());
+
+        result = CourseVisitOrderOptimizer.optimize(
                 request,
                 prepared.facts(),
+                result
+        );
+
+        checkCancelled();
+
+        return new ComputedCourse(
+                prepared.facts(),
                 result,
-                prepared.metadata());
-        CourseBudgetCalculation budget = courseBudgetService.calculateAndCache(
-                persistence.course().getId());
+                prepared.metadata()
+        );
+    }
+
+    /**
+     * 생성 결과 저장과 응답 구성.
+     *
+     * 비동기 작업에서는 호출자가 연 트랜잭션 안에서 실행해
+     * 코스 저장 / 작업 성공 / 알림 기록이 함께 확정되게 한다.
+     */
+    public CourseResponseDto persistComputedCourse(
+            CourseRequestDto request,
+            ComputedCourse computed
+    ) {
+        return persistComputedCourse(request, computed, null);
+    }
+
+    private CourseResponseDto persistComputedCourse(
+            CourseRequestDto request,
+            ComputedCourse computed,
+            KakaoAccommodationProvider.VerifiedAccommodation accommodation
+    ) {
+        CoursePersistenceResult persistence = accommodation == null
+                ? coursePersistenceService.persist(
+                request,
+                computed.facts(),
+                computed.result(),
+                computed.metadata()
+                )
+                : coursePersistenceService.persist(
+                request,
+                computed.facts(),
+                computed.result(),
+                computed.metadata(),
+                accommodation
+                );
+
+        CourseBudgetCalculation budget =
+                courseBudgetService.calculateAndCache(
+                        persistence.course().getId()
+                );
+
         return courseResponseAssembler.assemble(
-                prepared.facts(), result, persistence,
-                request.getAccommodation(), budget);
+                computed.facts(),
+                computed.result(),
+                persistence,
+                accommodation == null
+                        ? request.getAccommodation()
+                        : AccommodationDto.fromKakao(accommodation.place(), accommodation.region()),
+                budget
+        );
+    }
+
+    public record ComputedCourse(
+            CourseGenerationFacts facts,
+            CourseAiResultDto result,
+            CourseGenerationMetadata metadata
+    ) {
     }
 
     CourseAiInputDto prepareAiInput(CourseRequestDto request) {
@@ -62,7 +172,6 @@ public class CourseService {
         LocalDate startDate = request.getStartDate();
         LocalDate endDate = request.getEndDate();
         Integer people = request.getPeople();
-        Integer budgetTotal = request.getBudgetTotal();
         Transport transport = request.getTransport();
         List<CourseRegionDto> courseRegions = request.getCourseRegions();
         List<CourseStyleDto> courseStyles = request.getCourseStyles();
@@ -77,12 +186,10 @@ public class CourseService {
             throw new IllegalArgumentException("종료일은 시작일보다 빠를 수 없습니다.");
         }
 
+        courseDatePolicy.validate(startDate, endDate);
+
         if (people == null || people <= 0) {
             throw new IllegalArgumentException("인원은 1명 이상이어야 합니다.");
-        }
-
-        if (budgetTotal == null || budgetTotal <= 0) {
-            throw new IllegalArgumentException("예산은 0원보다 커야 합니다.");
         }
 
         if (transport == null) {
@@ -99,26 +206,48 @@ public class CourseService {
 
         validatePlacePreferences(coursePlacePreferences, startDate, endDate);
 
-        List<TourPlaceDto> tourPlaces = tourApiService.getTourPlaces();
+        List<CourseCandidateDto> stored = dbCandidateService.map(service -> service.find(request)).orElseGet(List::of);
+        int target = CourseCandidateShortlistService.targetSize(request);
+        boolean needsSupplement = stored.size() < target || !coversSelectedStyles(request,stored);
+        log.info("AI_CANDIDATES db={} target={} ktoFallback={}", stored.size(), target, needsSupplement);
+        if (!needsSupplement) {
+            return prepareCandidates(request, stored);
+        }
+        List<TourPlaceDto> tourPlaces;
+        try {
+            tourPlaces = tourApiService.getTourPlaces();
+        } catch (KtoApiException exception) {
+            // Validator requires every requested day to be non-empty; never fabricate a missing candidate.
+            long minimum = java.time.temporal.ChronoUnit.DAYS.between(startDate, endDate) + 1;
+            if (exception.isTemporary() && stored.size() >= minimum) return prepareCandidates(request, stored);
+            throw exception;
+        }
 
-        if (tourPlaces.isEmpty()) {
+        if (tourPlaces.isEmpty() && stored.isEmpty()) {
+            if (dbCandidateService.isPresent()) throw new KtoApiException(true);
             throw new IllegalArgumentException("조회된 관광지가 없습니다.");
         }
 
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMdd");
-        List<CourseCandidateDto> courseCandidates = new ArrayList<>();
+        List<CourseCandidateDto> courseCandidates = new ArrayList<>(stored);
 
         List<CourseCandidateShortlistService.ShortlistedPlace> shortlistedPlaces =
                 courseCandidateShortlistService.select(request, tourPlaces);
 
-        if (shortlistedPlaces.isEmpty() && (coursePlacePreferences == null
+        if (shortlistedPlaces.isEmpty() && stored.isEmpty() && (coursePlacePreferences == null
                 || coursePlacePreferences.stream().noneMatch(p -> p != null
                 && p.getPreferenceType() == PreferenceType.WANT))) {
-            throw new IllegalArgumentException("선택한 권역에서 일정을 구성할 수 있는 장소가 없습니다.");
+            throw new KtoApiException(true);
         }
 
         for (CourseCandidateShortlistService.ShortlistedPlace shortlisted : shortlistedPlaces) {
+            checkCancelled();
             TourPlaceDto place = shortlisted.place();
+            if (stored.stream().anyMatch(c -> c.getStoredCandidate().identity().sourceCode().equals("KTO")
+                    && c.getStoredCandidate().identity().sourcePlaceId().equals(place.getContentId()))) continue;
+            if (!stored.isEmpty() && courseCandidates.size() >= target && shortlisted.preferenceType() != PreferenceType.WANT
+                    && request.getCourseStyles().stream().noneMatch(style -> shortlisted.confirmedStyleHints().contains(style.getCode())
+                    && courseCandidates.stream().noneMatch(c -> c.getConfirmedStyleHints().contains(style.getCode())))) continue;
             PreferenceType preferenceType = shortlisted.preferenceType();
             List<String> confirmedStyleHints = shortlisted.confirmedStyleHints();
             String signguCd;
@@ -172,6 +301,35 @@ public class CourseService {
             ));
         }
 
+        if (dbCandidateService.isPresent() && courseCandidates.size() < java.time.temporal.ChronoUnit.DAYS.between(startDate, endDate) + 1) {
+            throw new KtoApiException(true);
+        }
+        return prepareCandidates(request, capCandidatesPreservingStyles(request,courseCandidates,target));
+    }
+
+    private boolean coversSelectedStyles(CourseRequestDto request,List<CourseCandidateDto> candidates) {
+        return request.getCourseStyles().stream().allMatch(style -> candidates.stream()
+                .anyMatch(c -> c.getConfirmedStyleHints().contains(style.getCode())));
+    }
+
+    private List<CourseCandidateDto> capCandidatesPreservingStyles(CourseRequestDto request,
+            List<CourseCandidateDto> candidates,int target) {
+        List<CourseCandidateDto> selected = new ArrayList<>(candidates.stream()
+                .filter(c -> c.getPreferenceType()==PreferenceType.WANT).toList());
+        for(var style:request.getCourseStyles()) {
+            if(selected.size()>=target)break;
+            if(selected.stream().anyMatch(c -> c.getConfirmedStyleHints().contains(style.getCode())))continue;
+            candidates.stream().filter(c -> c.getConfirmedStyleHints().contains(style.getCode())).findFirst().ifPresent(selected::add);
+        }
+        for(var candidate:candidates) {
+            if(selected.size()>=target)break;
+            if(!selected.contains(candidate))selected.add(candidate);
+        }
+        return selected;
+    }
+
+    private PreparedCourse prepareCandidates(CourseRequestDto request, List<CourseCandidateDto> courseCandidates) {
+        checkCancelled();
         CourseAiPreparationService.PreparedGeneration generation =
                 courseAiPreparationService.prepareGeneration(request, courseCandidates);
         return new PreparedCourse(
@@ -185,6 +343,10 @@ public class CourseService {
             CourseGenerationFacts facts,
             CourseGenerationMetadata metadata
     ) {
+    }
+
+    private static void checkCancelled() {
+        if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException("코스 생성 작업이 중단됐습니다.");
     }
 
     private void validatePlacePreferences(

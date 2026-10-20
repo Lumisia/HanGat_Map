@@ -1,6 +1,5 @@
 package com.example.hangat.course;
 
-import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -8,9 +7,9 @@ import java.util.Map;
 /**
  * 검증된 비용 원장을 한 번 집계한 불변 결과다.
  *
- * <p>{@code totalExpected}와 예산 판정은 보수적으로 예상 범위의 상한을 사용한다.
+ * <p>{@code totalExpected}는 보수적으로 예상 범위의 상한을 사용한다.
  * 범위 자체는 {@code totalExpectedMin/Max}로 함께 보존한다. 비용 금액 fact가 없으면
- * 합계·잔액·사용률·초과 여부는 모두 {@code null}이며, 빈 원장을 0원 코스로 확정하지 않는다.
+ * 합계는 {@code null}이며, 빈 원장을 0원 코스로 확정하지 않는다.
  */
 public record CourseBudgetCalculation(
         BudgetSummary summary,
@@ -23,11 +22,10 @@ public record CourseBudgetCalculation(
         itemCostsByItemId = immutableMap(itemCostsByItemId);
     }
 
-    public static CourseBudgetCalculation noData(Integer budgetTotal) {
+    public static CourseBudgetCalculation noData() {
         return new CourseBudgetCalculation(
                 new BudgetSummary(
-                        false, budgetTotal, 0, null, null, null,
-                        null, null, null, null, 0),
+                        false, 0, null, null, null, null, 0),
                 null,
                 null,
                 Map.of());
@@ -47,15 +45,11 @@ public record CourseBudgetCalculation(
 
     public record BudgetSummary(
             boolean hasCostData,
-            Integer budgetTotal,
             int verifiedTotal,
             Integer estimatedTotal,
             Integer estimatedMin,
             Integer estimatedMax,
             Integer totalExpected,
-            Integer remainingBudget,
-            BigDecimal usageRate,
-            Boolean overBudget,
             int unknownCount
     ) {
     }

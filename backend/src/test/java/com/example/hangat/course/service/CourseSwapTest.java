@@ -61,6 +61,23 @@ class CourseSwapTest {
     @Autowired CourseSwapService swapService;
     @Autowired CourseRepository courseRepository;
     @Autowired CourseItemRepository itemRepository;
+    @Autowired com.example.hangat.course.CourseBudgetService budgets;
+    @Autowired com.example.hangat.course.repository.CourseItemCostRepository costs;
+
+    @Test
+    void swappingRemovesOldPlaceCostsAndRecalculatesNewMenuEstimate() throws Exception {
+        성산일출봉.markGoodPrice(출발일, "대표메뉴: 정식 8,000원", null);
+        혼인지.markGoodPrice(출발일, "대표메뉴: 정식 12,000원", null);
+        budgets.calculateAndCache(course.getId());
+        assertThat(course.getEstimatedCostMax()).isEqualTo(8000 * course.getPeople());
+        var response = swapService.swap(course.getId(), 첫날_첫칸.getId(), 혼인지.getId(), null);
+        assertThat(course.getEstimatedCostMax()).isEqualTo(12000 * course.getPeople());
+        assertThat(costs.findByCourseId(course.getId()).stream()
+                .filter(c -> c.getCourseItem() != null && c.getCourseItem().getId().equals(첫날_첫칸.getId()))
+                .map(c -> c.getAmountMax())).containsExactly(12000 * course.getPeople());
+        swapService.swap(course.getId(), 첫날_첫칸.getId(), 예보없는곳.getId(), null);
+        assertThat(course.getEstimatedCostMax()).isNull();
+    }
     @Autowired PlaceRepository placeRepository;
     @Autowired CongestionForecastRepository forecastRepository;
     @Autowired RegionRepository regionRepository;
@@ -195,7 +212,7 @@ class CourseSwapTest {
         CourseSwapResponse.SwappedItem 교체됨 = response.updatedItems().get(0);
         assertThat(교체됨.placeName()).isEqualTo("혼인지");
         assertThat(교체됨.replacedFromPlaceName()).isEqualTo("성산일출봉");
-        assertThat(교체됨.congestionLabel()).isEqualTo("여유");
+        assertThat(교체됨.congestionLabel()).isEqualTo("한산");
         assertThat(교체됨.inboundDistanceM()).isNull();
         assertThat(response.updatedItems().get(1).placeName()).isEqualTo("광치기해변");
         // 2일차 일정은 영향이 없으므로 응답에 없다
@@ -211,7 +228,7 @@ class CourseSwapTest {
 
         // (23 + 45 + 30) / 3 = 32.67 - 스왑 전 (83+45+30)/3 = 52.67에서 내려간다
         assertThat(response.averageCongestionRate()).isEqualByComparingTo("32.67");
-        assertThat(response.congestionLabel()).isEqualTo("여유");
+        assertThat(response.congestionLabel()).isEqualTo("한산");
         assertThat(courseRepository.findById(course.getId()).orElseThrow()
                 .getAverageCongestionRate()).isEqualByComparingTo("32.67");
     }
@@ -271,7 +288,7 @@ class CourseSwapTest {
                 .andExpect(jsonPath("$.result.updated_items[0].place_name").value("혼인지"))
                 .andExpect(jsonPath("$.result.updated_items[0].replaced_from_place_name")
                         .value("성산일출봉"))
-                .andExpect(jsonPath("$.result.congestion_label").value("여유"));
+                .andExpect(jsonPath("$.result.congestion_label").value("한산"));
     }
 
     @Test

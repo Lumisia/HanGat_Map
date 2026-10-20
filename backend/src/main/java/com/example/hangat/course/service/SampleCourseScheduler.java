@@ -22,6 +22,9 @@ import java.time.ZoneId;
  * (같은 출발일 READY가 있는 프리셋만 스킵 - 부분 실패분은 재기동으로 채워진다).
  */
 @Component
+@org.springframework.context.annotation.Profile("!batch")
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+        name = "hangat.scheduling.enabled", havingValue = "true", matchIfMissing = true)
 public class SampleCourseScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(SampleCourseScheduler.class);

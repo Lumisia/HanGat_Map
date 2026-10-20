@@ -8,8 +8,6 @@ import java.math.BigDecimal;
 public class GeoService {
 
     private static final double EARTH_RADIUS_KM = 6371.0;
-    /** 위도 1도의 거리(km). 경도 1도는 위도에 따라 줄어들어 cos(위도)를 곱해야 한다 */
-    private static final double KM_PER_DEGREE_LAT = 111.32;
 
     /** 두 지점 사이 직선거리(km) - 하버사인 공식 */
     public double distanceKm(double lat1, double lng1, double lat2, double lng2) {
@@ -29,8 +27,11 @@ public class GeoService {
 
     /** 중심점 기준 반경을 덮는 바운딩 박스 - DB 선필터(WHERE lat BETWEEN ...)용 */
     public BoundingBox boxAround(double lat, double lng, double radiusKm) {
-        double latDelta = radiusKm / KM_PER_DEGREE_LAT;
-        double lngDelta = radiusKm / (KM_PER_DEGREE_LAT * Math.cos(Math.toRadians(lat)));
+        // Use the same sphere as distanceKm so the DB prefilter never clips the radius edge.
+        double angularRadius = radiusKm / EARTH_RADIUS_KM;
+        double latDelta = Math.toDegrees(angularRadius);
+        double lngDelta = Math.abs(lat) + latDelta >= 90 ? 180
+                : Math.toDegrees(Math.asin(Math.min(1, Math.sin(angularRadius) / Math.cos(Math.toRadians(lat)))));
         return new BoundingBox(lat - latDelta, lat + latDelta, lng - lngDelta, lng + lngDelta);
     }
 

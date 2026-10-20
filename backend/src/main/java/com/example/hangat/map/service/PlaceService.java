@@ -41,8 +41,8 @@ public class PlaceService {
                 .orElseGet(placeRepository::findListAll);
     }
 
-    /** 검색 드롭다운은 상위만 보여준다 - 페이징을 소비할 화면이 없어 limit 고정. */
-    private static final int SEARCH_LIMIT = 20;
+    /** 검색 드롭다운은 상위만 보여준다 - 페이징을 소비할 화면이 없어 limit 고정. 20 → 30(2026-09-14, 프론트 로컬 매칭을 없애며 서버가 전부 책임) */
+    private static final int SEARCH_LIMIT = 30;
 
     /**
      * 2글자 미만은 빈 결과 - 한 글자는 수백 건이 걸려 드롭다운이 의미를 잃는다.
@@ -53,11 +53,32 @@ public class PlaceService {
         if (query.length() < 2) {
             return List.of();
         }
+        // 길이 검사는 사용자가 친 글자 기준, DB 에는 이스케이프한 값을 보낸다 - "%%" 두 글자가 전체 매칭이 되지 않게
+        String pattern = escapeLike(query);
         String regionCode = (region == null || region.isBlank()) ? null : region;
         if (categories == null || categories.isEmpty()) {
-            return placeRepository.searchList(query, regionCode, PageRequest.of(0, SEARCH_LIMIT));
+            return placeRepository.searchList(pattern, regionCode, PageRequest.of(0, SEARCH_LIMIT));
         }
-        return placeRepository.searchListInCategories(query, regionCode, categories, PageRequest.of(0, SEARCH_LIMIT));
+        return placeRepository.searchListInCategories(pattern, regionCode, categories, PageRequest.of(0, SEARCH_LIMIT));
+    }
+
+    /** LIKE 이스케이프 문자. {@code PlaceRepository}의 검색 쿼리 {@code escape '!'}와 반드시 같아야 한다. */
+    static final char LIKE_ESCAPE = '!';
+
+    /**
+     * 사용자 입력을 LIKE 패턴 안에서 <b>글자 그대로</b> 취급되게 바꾼다 - {@code %}·{@code _}는 와일드카드,
+     * {@code !}는 우리가 고른 이스케이프 문자라 세 개만 앞에 {@code !}를 붙인다.
+     * 한글·영문·숫자·공백은 그대로라 정상 검색어의 결과는 변하지 않는다.
+     */
+    static String escapeLike(String raw) {
+        StringBuilder out = new StringBuilder(raw.length() + 4);
+        for (char c : raw.toCharArray()) {
+            if (c == LIKE_ESCAPE || c == '%' || c == '_') {
+                out.append(LIKE_ESCAPE);
+            }
+            out.append(c);
+        }
+        return out.toString();
     }
 
     public PlaceDetailResponse getPlace(Long placeId) {

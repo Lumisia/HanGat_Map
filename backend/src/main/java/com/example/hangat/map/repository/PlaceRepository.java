@@ -4,10 +4,13 @@ import com.example.hangat.map.model.dto.PlaceListResponse;
 import com.example.hangat.map.model.entity.Place;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import jakarta.persistence.LockModeType;
 
 import java.math.BigDecimal;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -33,6 +36,11 @@ import java.util.Optional;
  * 넷 다 {@code @Query} 전용이며 부팅 시 {@code em.createQuery}로 검증된다.
  */
 public interface PlaceRepository extends JpaRepository<Place, Long> {
+
+    /** 후기 쓰기와 탈퇴 계정 정리가 같은 장소의 평점 집계를 직렬화한다. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select p from Place p where p.id = :id")
+    Optional<Place> findByIdForUpdate(@Param("id") Long id);
 
     /**
      * 목록 SELECT 절. <b>이 인자 순서가 곧 {@link PlaceListResponse} 생성자 시그니처</b>이며
@@ -88,32 +96,50 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
                                                            @Param("goodPrice") Boolean goodPrice);
 
     /**
-     * 통합 검색 (MAP_002) - 이름·메뉴(overview) 부분 일치. 화면의 필터(권역·업종 칩) 범위 안에서만 찾는다.
+     * 통합 검색 (MAP_002) - 이름·세부분류(태그)·메뉴(overview) 부분 일치. 권역은 화면 칩 범위, 업종은 호출부가 정한다.
      * 좌표 없는 장소는 뺀다: 결과 클릭 = 지도 이동이라 좌표가 필수다.
-     * 이름 일치를 메뉴 일치보다 앞세운다 - 검색 엔진 없이 내는 최소한의 연관도.
      * overview는 CLOB이라 SELECT에는 여전히 싣지 않고(§9.1) 조건으로만 쓴다.
+     *
+     * <p><b>2026-09-14 검색을 백엔드로 단일화</b>(프론트가 받아 둔 관광지를 따로 뒤지던 것을 없앰):
+     * <ul>
+     *   <li>태그 매칭 추가 - "오름"·"해변"처럼 세부분류로 찾는 건 프론트 로컬에서만 되던 것.</li>
+     *   <li>overview 매칭은 <b>업소(관광지 외)만</b> - 관광지 소개글은 긴 문장이라 "라면"이 "…이라면…"에 걸려
+     *       서건도·수산봉이 라면 검색에 나왔다. 업소 overview 는 "대표메뉴: …" 형태라 메뉴 검색으로 쓸 만하다.</li>
+     *   <li>정렬 확정 - 이름 > 태그 > 메뉴, 같은 급이면 관광지 먼저(혼잡 예보가 있는 제품의 중심), 그 안에서 접두 > 포함 > 짧은 이름.
+     *       "오름"은 개오름·금오름(관광지)이 오름가든(식당)보다 위, "성산"은 성산일출봉이 지점명들보다 위.</li>
+     * </ul>
+     *
+     * <p><b>{@code :q}는 서비스가 LIKE 특수문자를 이스케이프한 값이어야 한다</b>({@code PlaceService#escapeLike}).
+     * 사용자가 친 {@code %}·{@code _}가 그대로 들어가면 "아무 글자"로 해석돼 {@code %%}만 쳐도 전부 매칭된다.
+     * 이스케이프 문자는 {@code !} - 여기 {@code escape '!'}와 서비스가 짝이다. 한쪽만 바꾸면 검색이 조용히 틀린다.
      */
     String SEARCH_WHERE = """
 
              and p.latitude is not null and p.longitude is not null
              and (:region is null or r.code = :region)
-             and (p.name like concat('%', :q, '%') or p.overview like concat('%', :q, '%'))""";
+             and (p.name like concat('%', :q, '%') escape '!'
+                  or t.name like concat('%', :q, '%') escape '!'
+                  or (c.code <> 'TOURIST' and p.overview like concat('%', :q, '%') escape '!'))""";
 
-    /** 접두 일치 > 이름 포함 > 메뉴 매칭, 같은 급이면 짧은 이름 우선 - "성산" 검색에 성산일출봉이 성산점 지점명보다 위로 온다. */
+    /** 이름 > 태그 > 메뉴 → 관광지 먼저 → 접두 > 포함 → 짧은 이름. 위 javadoc 참고.
+     *  이름 길이는 "[유네스코 세계자연유산]" 같은 괄호 주석을 뺀 본이름으로 잰다 - 안 그러면 "성산" 검색에 성산일출봉이 성산포성당 뒤로 밀린다 */
     String SEARCH_ORDER = """
 
-            order by case when p.name like concat(:q, '%') then 0
-                          when p.name like concat('%', :q, '%') then 1
+            order by case when p.name like concat('%', :q, '%') escape '!' then 0
+                          when t.name like concat('%', :q, '%') escape '!' then 1
                           else 2 end,
-                     length(p.name), p.id""";
+                     case when c.code = 'TOURIST' then 0 else 1 end,
+                     case when p.name like concat(:q, '%') escape '!' then 0 else 1 end,
+                     case when locate('[', p.name) > 0 then locate('[', p.name) - 1 else length(p.name) end,
+                     p.id""";
 
-    /** 업종 칩이 하나도 없거나 전부 켜진 상태 - 카테고리 조건 없이 찾는다. */
+    /** 카테고리 조건 없이 찾는다 - 지도 검색창의 기본 경로(2026-09-14부터 업종 칩과 무관하게 전체 검색). */
     @Query(LIST_SELECT + SEARCH_WHERE + SEARCH_ORDER)
     List<PlaceListResponse> searchList(@Param("q") String q,
                                        @Param("region") String region,
                                        Pageable pageable);
 
-    /** 켜진 업종 칩의 카테고리 안에서만. JPQL의 in은 빈 목록을 못 받아 쿼리를 나눈다 - 분기는 서비스가 한다. */
+    /** 카테고리를 좁혀 찾는다(API 파라미터로 남겨 둔다). JPQL의 in은 빈 목록을 못 받아 쿼리를 나눈다 - 분기는 서비스가 한다. */
     @Query(LIST_SELECT + SEARCH_WHERE + " and c.code in :categories" + SEARCH_ORDER)
     List<PlaceListResponse> searchListInCategories(@Param("q") String q,
                                                    @Param("region") String region,
@@ -141,6 +167,19 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
     List<Object[]> findApiTagOf(@Param("placeId") Long placeId);
 
     /**
+     * 여러 장소의 세부분류를 한 번에 - 찜 목록(favorite)이 장소마다 {@link #findApiTagOf}를 부르면 N+1이라 묶어 읽는다.
+     * (placeId, tagName). 장소당 한 건이 전제지만 둘이어도 호출부가 첫 건을 쓴다.
+     */
+    @Query("""
+            select pt.place.id, t.name
+            from PlaceTag pt
+              join pt.tag t
+            where pt.place.id in :placeIds
+              and pt.sourceType = com.example.hangat.map.model.enums.TagSourceType.API
+            """)
+    List<Object[]> findApiTagNamesOf(@Param("placeIds") Collection<Long> placeIds);
+
+    /**
      * 상세(detailIntro2)를 아직 안 받은 장소. 쿼터가 하루 1,000콜이라 나눠 도는데,
      * 커서를 따로 저장하지 않고 '비어 있는 것부터' 집어 자연히 이어지게 한다.
      *
@@ -155,14 +194,26 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
             """)
     List<Place> findWithoutDetail(Pageable pageable);
 
-    /** 메뉴(overview)가 아직 없는 음식점부터. KTO가 메뉴를 안 주는 곳도 다시 잡힌다 - 상세 적재의 empty 와 같은 트레이드오프 */
+    /** 메뉴(overview)가 아직 없는 KTO 음식점·카페부터. KTO가 메뉴를 안 주는 곳도 다시 잡힌다 - 상세 적재의 empty 와 같은 트레이드오프.
+     *  KTO 매핑이 있는 곳만 - 카페엔 소상공인 상가 3,039곳(메뉴 없음, KTO 아님)이 있어 조건 없이 잡으면 페이지가 그걸로 다 찬다(2026-09-14 CAFE 추가) */
     @Query("""
             select p from Place p
-            where p.primaryCategory.code = 'FOOD'
+            where p.primaryCategory.code in ('FOOD', 'CAFE')
               and p.overview is null
+              and exists (select 1 from PlaceSourceMapping m where m.place = p and m.source.code = 'KTO')
             order by p.id
             """)
     List<Place> findFoodWithoutMenu(Pageable pageable);
+
+    /** 소개글(overview)이 아직 없는 관광지부터. 폐업은 콜을 아낀다 */
+    @Query("""
+            select p from Place p
+            where p.primaryCategory.code = 'TOURIST'
+              and p.overview is null
+              and p.businessStatus <> com.example.hangat.map.model.enums.BusinessStatus.CLOSED
+            order by p.id
+            """)
+    List<Place> findTouristWithoutOverview(Pageable pageable);
 
     List<Place> findByNormalizedName(String normalizedName);
 
@@ -190,6 +241,7 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
 
     /**
      * 대안 스왑용 후보 조회 - 같은 카테고리 + 바운딩 박스 선필터 (정밀 거리는 GeoService가 2차 컷).
+     * 폐업(CLOSED)은 대안으로 권하지 않는다.
      * 팀 규칙상 네이티브 대신 JPQL. region은 응답 표시명에 바로 쓰므로 fetch join.
      */
     @Query("""
@@ -198,6 +250,7 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
             where p.primaryCategory.code = :categoryCode
               and p.latitude between :minLat and :maxLat
               and p.longitude between :minLng and :maxLng
+              and p.businessStatus <> com.example.hangat.map.model.enums.BusinessStatus.CLOSED
             """)
     List<Place> findCandidatesInBox(String categoryCode,
                                     BigDecimal minLat, BigDecimal maxLat,

@@ -20,6 +20,38 @@ import static org.mockito.Mockito.mock;
 
 class CourseServiceValidationTest {
 
+    @Test
+    void requestContractNoLongerContainsTotalBudget() throws Exception {
+        var json = objectMapper.valueToTree(preferences(""));
+        org.assertj.core.api.Assertions.assertThat(json.has("budget_total")).isFalse();
+    }
+
+    @Test
+    void ignoresTotalBudgetInPreviouslyQueuedRequests() throws Exception {
+        var legacy = objectMapper.valueToTree(preferences(""));
+        ((com.fasterxml.jackson.databind.node.ObjectNode) legacy).put("budget_total", 400000);
+        var request = objectMapper.treeToValue(legacy, CourseRequestDto.class);
+        assertThatCode(() -> courseService.prepareAiInput(request)).doesNotThrowAnyException();
+        org.assertj.core.api.Assertions.assertThat(objectMapper.valueToTree(request).has("budget_total")).isFalse();
+    }
+
+    @Test
+    void acceptsMissingBudgetAndEmptyPlacePreferences() throws Exception {
+        CourseRequestDto request = preferences("");
+        assertThatCode(() -> courseService.prepareAiInput(request)).doesNotThrowAnyException();
+        var input = courseService.prepareAiInput(request);
+        var prompt = new com.example.hangat.course.ai.CourseAiPrompt(objectMapper).userPrompt(input);
+        var json = objectMapper.readTree(prompt);
+        org.assertj.core.api.Assertions.assertThat(input.userPreferences().requiredPlaces()).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(input.userPreferences().forbiddenPlaces()).isEmpty();
+        var required = json.path("hardConstraints").path("requiredCandidates");
+        org.assertj.core.api.Assertions.assertThat(required.isArray()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(required.size()).isZero();
+        var async = mock(AsyncCourseService.class, org.mockito.Mockito.CALLS_REAL_METHODS);
+        assertThatCode(() -> org.springframework.test.util.ReflectionTestUtils.invokeMethod(async, "validateRequest", request))
+                .doesNotThrowAnyException();
+    }
+
     private final ObjectMapper objectMapper = new ObjectMapper()
             .registerModule(new JavaTimeModule());
     private final CourseService courseService = new CourseService(
@@ -145,7 +177,6 @@ class CourseServiceValidationTest {
                   "start_date": "2026-08-27",
                   "end_date": "2026-08-29",
                   "people": 2,
-                  "budget_total": 500000,
                   "transport": "RENTAL_CAR",
                   "course_regions": [],
                   "course_styles": [{"code": "NATURE", "weight": 1}],

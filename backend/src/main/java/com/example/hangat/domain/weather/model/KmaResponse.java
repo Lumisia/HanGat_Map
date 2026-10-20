@@ -17,7 +17,14 @@ public record KmaResponse<T>(Response<T> response) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record Body<T>(Items<T> items) {
+    public record Body<T>(
+            Items<T> items,
+            Integer totalCount
+    ) {
+        // 기존 테스트·생성 코드와의 호환성 유지.
+        public Body(Items<T> items) {
+            this(items, null);
+        }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

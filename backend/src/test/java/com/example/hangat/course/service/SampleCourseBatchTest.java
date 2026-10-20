@@ -56,6 +56,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 북부는 전부 혼잡(생존 불가). 출발일은 비 예보(80%) - 실내 우선 배치까지 본다.
  * 프리셋은 <b>평균 집중률 역순(서→동→남)으로 미리 만들어</b> 카드 정렬이 프리셋 id 순서와
  * 우연히 일치해 통과하는 허위 통과를 막는다.
+ *
+ * <p>⚠️ 날짜를 상수로 박지 않는다. {@code MainCourseService}가 {@code !startDate.isBefore(오늘)}로
+ * 지난 출발일 카드를 걸러내므로, 고정 날짜를 쓰면 그 날이 지나는 순간 카드 검증이 0장으로 깨진다
+ * (실제로 2026-09-05로 박혀 있다가 하루 뒤 CI 배포가 막혔다). 모든 날짜는 {@link #출발일} 기준
+ * 상대값으로 만든다.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -63,8 +68,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Transactional
 class SampleCourseBatchTest {
 
-    private static final LocalDate 출발일 = LocalDate.of(2026, 9, 5);
-    private static final LocalDateTime 발표버전 = LocalDateTime.of(2026, 9, 4, 0, 0);
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+    /** 오늘 - 카드 컷이 오늘을 포함하므로(startDate >= 오늘) 배치 결과가 그대로 카드로 나온다. */
+    private static final LocalDate 출발일 = LocalDate.now(KST);
+    private static final LocalDateTime 발표버전 = 출발일.minusDays(1).atStartOfDay();
     private static final int 시드일수 = 4;   // 출발일+1 배치(2박3일)까지 돌릴 수 있게
 
     @Autowired MockMvc mockMvc;
@@ -227,8 +234,8 @@ class SampleCourseBatchTest {
             em.persist(kmaShort);
         }
         Region south = regionRepository.findByCode("SOUTH").orElseThrow();
-        LocalDateTime 어제발표 = LocalDateTime.of(2026, 9, 3, 20, 0);
-        LocalDateTime 오늘발표 = LocalDateTime.of(2026, 9, 4, 20, 0);
+        LocalDateTime 어제발표 = 출발일.minusDays(2).atTime(20, 0);
+        LocalDateTime 오늘발표 = 출발일.minusDays(1).atTime(20, 0);
         for (int day = 0; day < 3; day++) {
             weatherForecastRepository.save(WeatherForecast.daily(south, kmaShort,
                     PlaceNameNormalizer.jejuDayToUtc(출발일.plusDays(day)), 오늘발표,
@@ -349,7 +356,7 @@ class SampleCourseBatchTest {
                 .andExpect(jsonPath("$.result[0].title").value("남부 여유 2박 3일"))
                 .andExpect(jsonPath("$.result[0].duration_text").value("2박 3일"))
                 .andExpect(jsonPath("$.result[0].congestion_level").value("QUIET"))
-                .andExpect(jsonPath("$.result[0].congestion_label").value("여유"))
+                .andExpect(jsonPath("$.result[0].congestion_label").value("한산"))
                 .andExpect(jsonPath("$.result[0].people").value(2))
                 .andExpect(jsonPath("$.result[0].place_count").value(9))
                 .andExpect(jsonPath("$.result[0].estimated_cost_min").isEmpty())
@@ -364,8 +371,8 @@ class SampleCourseBatchTest {
         Course 낡은코스 = courseRepository.save(Course.builder()
                 .preset(preset).courseType(CourseType.SAMPLE)
                 .title(preset.getDefaultTitle())
-                .startDate(LocalDate.now(ZoneId.of("Asia/Seoul")).minusDays(1))
-                .endDate(LocalDate.now(ZoneId.of("Asia/Seoul")))
+                .startDate(LocalDate.now(KST).minusDays(1))
+                .endDate(LocalDate.now(KST))
                 .transport(Transport.RENTAL_CAR)
                 .build());
         낡은코스.markReady();

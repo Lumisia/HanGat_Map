@@ -14,11 +14,16 @@ public record WeatherFact(
         String precipitationTypeCode,
         String skyConditionCode,
         BigDecimal windSpeed,
-        Integer humidity
+        Integer humidity,
+        DailyWeatherEvidence dailyEvidence
 ) {
+    public WeatherFact(Long id, LocalDate date, LocalTime time, BigDecimal temperature,
+            Integer probability, String precipitation, String sky, BigDecimal wind, Integer humidity) {
+        this(id, date, time, temperature, probability, precipitation, sky, wind, humidity, null);
+    }
     public WeatherFact {
         Objects.requireNonNull(forecastDate, "예보 대상일은 필수입니다.");
-        Objects.requireNonNull(forecastTime, "예보 대상시각은 필수입니다.");
+        if (dailyEvidence == null) Objects.requireNonNull(forecastTime, "예보 대상시각은 필수입니다.");
         requirePercentage(precipitationProbability, "강수확률");
         requirePercentage(humidity, "습도");
         if (windSpeed != null && windSpeed.signum() < 0) {

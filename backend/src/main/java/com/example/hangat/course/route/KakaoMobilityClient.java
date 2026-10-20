@@ -61,6 +61,32 @@ public class KakaoMobilityClient {
         return route(points, 1);
     }
 
+    /** Alternative ranking needs the shortest car-road distance, not the recommended polyline. */
+    int shortestDistance(RoutePoint from, RoutePoint to) {
+        if (restKey == null || restKey.isBlank()) throw new CourseCarRouteException("Kakao Mobility REST key is not configured.");
+        String uri = UriComponentsBuilder.fromPath(DIRECTIONS_PATH)
+                .queryParam("origin", coordinate(from)).queryParam("destination", coordinate(to))
+                .queryParam("priority", "DISTANCE").queryParam("alternatives", false)
+                .queryParam("avoid", "ferries").queryParam("summary", true).build().toUriString();
+        try {
+            JsonNode body = restClient.get().uri(uri).header("Authorization", "KakaoAK " + restKey)
+                    .retrieve().body(JsonNode.class);
+            JsonNode route = body == null ? null : body.path("routes").path(0);
+            if (route == null || !route.path("result_code").isIntegralNumber())
+                throw new CourseCarRouteException("Missing road-distance result code.");
+            int code = route.path("result_code").asInt();
+            if (code >= 101 && code <= 104) throw new RouteCoordinateException(code);
+            if (code != 0) throw new CourseCarRouteException("Road-distance provider error.");
+            JsonNode distance = route.path("summary").path("distance");
+            if (!distance.isIntegralNumber() || !distance.canConvertToInt() || distance.asInt() < 0)
+                throw new CourseCarRouteException("Missing road distance.");
+            return distance.asInt();
+        } catch (RestClientResponseException | ResourceAccessException failure) {
+            // Do not multiply retries by the number of alternative candidates.
+            throw new CourseCarRouteException("Road-distance lookup failed. Retry explicitly.", failure);
+        }
+    }
+
     private Route route(List<RoutePoint> points, int attemptLimit) {
         if (restKey == null || restKey.isBlank()) {
             throw new CourseCarRouteException("Kakao Mobility REST key is not configured.");

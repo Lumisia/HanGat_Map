@@ -31,6 +31,8 @@ spring:
     properties:
       mail:
         smtp:
+          # HELO/EHLO가 OS 호스트명에 의존하면 일부 SMTP 서버가 문법 오류로 거부할 수 있다.
+          localhost: ${MAIL_SMTP_LOCALHOST:localhost}
           auth: true
           starttls:
             enable: true
@@ -90,6 +92,11 @@ weather:
   service-key: ${SERVICE_KEY}
   ingest:
     # 개발 머신마다 밤에 기상청을 부르지 않는다 - 수동 실행은 POST /admin/ingest/weather
+    enabled: false
+
+congestion:
+  ingest:
+    # 개발 머신마다 밤에 집중률 API를 부르지 않는다 - 수동 실행은 POST /admin/ingest/congestion
     enabled: false
 
 tour-api:

@@ -16,59 +16,94 @@
  *    `img-src 'self'` 로는 외부 이미지가 차단된다(vite.config.js).
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import ThemeToggle from '../layout/ThemeToggle.vue'
 import { nextHeroIndex } from '../../utils/heroCarousel.js'
 
 const props = defineProps({
   title: { type: String, required: true },
   lead: { type: String, default: '' },
-  heroImages: { type: Array, default: () => [] }
+  heroImages: { type: Array, default: () => [] },
+  backTo: { type: String, default: '' },
+  backLabel: { type: String, default: '뒤로가기' }
 })
 
 const heroIndex = ref(0)
+const previousHeroIndex = ref(-1)
+const readyImages = ref(new Set())
 const hasHeroCarousel = computed(() => props.heroImages.length > 0)
 let heroTimer
+let disposed = false
+
+async function prepareImage (event, index) {
+  const image = event.target
+  try {
+    // 다운로드뿐 아니라 브라우저가 그릴 준비까지 끝나야 전환 대상에 넣는다.
+    await image.decode()
+    if (disposed || !image.naturalWidth) return
+    readyImages.value.add(index)
+    if (!readyImages.value.has(heroIndex.value)) heroIndex.value = index
+  } catch {
+    // 실패한 사진은 건너뛰고 현재 사진을 계속 보여준다.
+  }
+}
 
 onMounted(() => {
   if (props.heroImages.length < 2) return
   heroTimer = window.setInterval(() => {
-    heroIndex.value = nextHeroIndex(heroIndex.value, props.heroImages.length)
+    const next = nextHeroIndex(heroIndex.value, props.heroImages.length, readyImages.value)
+    if (next === heroIndex.value) return
+    previousHeroIndex.value = heroIndex.value
+    heroIndex.value = next
   }, 5000)
 })
 
-onBeforeUnmount(() => window.clearInterval(heroTimer))
+onBeforeUnmount(() => {
+  disposed = true
+  window.clearInterval(heroTimer)
+})
 </script>
 
 <template>
   <main class="auth" :class="{ 'has-carousel': hasHeroCarousel }">
     <!-- 왼쪽: 사진 캔버스 -->
-    <aside class="hero" :class="{ carousel: hasHeroCarousel }" aria-hidden="true">
-      <Transition v-if="hasHeroCarousel" name="hero-slide">
+    <aside class="hero" :class="{ carousel: hasHeroCarousel }">
+      <template v-if="hasHeroCarousel">
         <img
-          :key="heroIndex"
+          v-for="(src, index) in heroImages"
+          :key="src"
           class="hero-photo"
-          :src="heroImages[heroIndex]"
+          :class="{
+            'is-current': index === heroIndex && readyImages.has(index),
+            'is-previous': index === previousHeroIndex
+          }"
+          :src="src"
+          :fetchpriority="index === 0 ? 'high' : 'low'"
+          decoding="async"
           alt=""
+          @load="prepareImage($event, index)"
         >
-      </Transition>
+      </template>
       <div class="veil" />
       <div class="hero-copy">
         <h2>Discover the<br>unseen paths.</h2>
-        <p>붐비는 시간을 비껴가는 코스로, 제주를 한갓지게 걷습니다.</p>
+        <p>붐비는 시간을 비껴가는 코스로, 제주를 <span class="keep-together">한갓지게 걷습니다.</span></p>
+        <span v-if="hasHeroCarousel" class="photo-credit">출처 : Unsplash</span>
       </div>
     </aside>
 
     <!-- 오른쪽: 폼 캔버스 -->
     <section class="panel">
-      <div class="ptop">
-        <ThemeToggle variant="icon" />
-      </div>
-
       <div class="form">
-        <RouterLink to="/home" class="brand">
-          <img class="brand-mk" src="/hangat-mark.png" alt="" width="166" height="144">
-          <span>한<em>갓</em>지도</span>
-        </RouterLink>
+        <div class="brand-row">
+          <RouterLink v-if="backTo" :to="backTo" class="back-link" :aria-label="backLabel" :title="backLabel">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m15 5-7 7 7 7" />
+            </svg>
+          </RouterLink>
+          <RouterLink to="/home" class="brand">
+            <img class="brand-mk" src="/hangat-mark.png" alt="" width="166" height="144">
+            <span>한<em>갓</em>지도</span>
+          </RouterLink>
+        </div>
 
         <header class="head">
           <h1>{{ title }}</h1>
@@ -107,15 +142,12 @@ onBeforeUnmount(() => window.clearInterval(heroTimer))
   position: absolute; inset: 0;
   width: 100%; height: 100%;
   object-fit: cover;
+  opacity: 0;
+  transition: opacity .9s ease;
 }
-.hero-slide-enter-active,
-.hero-slide-leave-active {
-  transition: transform .9s cubic-bezier(.76, 0, .24, 1);
-}
-.hero-slide-enter-active { z-index: 1; }
-.hero-slide-leave-active { z-index: 0; }
-.hero-slide-enter-from { transform: translateY(100%); }
-.hero-slide-leave-to { transform: translateY(-100%); }
+/* 기존 사진을 불투명한 바탕으로 남겨 전환 중에도 회색 배경이 비치지 않는다. */
+.hero-photo.is-previous { opacity: 1; z-index: 0; transition: none; }
+.hero-photo.is-current { opacity: 1; z-index: 1; }
 
 .veil { position: absolute; inset: 0; z-index: 2; background: var(--hero-veil); pointer-events: none; }
 
@@ -134,7 +166,13 @@ onBeforeUnmount(() => window.clearInterval(heroTimer))
 .hero-copy p {
   font-size: 15px; line-height: 1.75;
   color: rgba(255, 255, 255, .9);
-  max-width: 30ch;
+  word-break: keep-all;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, .4);
+}
+.keep-together { white-space: nowrap; }
+.photo-credit {
+  display: inline-block; margin-top: 4px;
+  font-size: 12px; line-height: 1.75; color: rgba(255, 255, 255, .9);
   text-shadow: 0 1px 8px rgba(0, 0, 0, .4);
 }
 
@@ -145,16 +183,24 @@ onBeforeUnmount(() => window.clearInterval(heroTimer))
   display: flex; flex-direction: column;
   overflow-y: auto;
 }
-.ptop { display: flex; justify-content: flex-end; }
 
 .form { width: 100%; max-width: 420px; margin: auto; padding: var(--sp-lg) 0; }
 
+.brand-row { display: flex; align-items: center; gap: 8px; margin-bottom: var(--sp-xl); }
+.back-link {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; flex-shrink: 0;
+  /* SVG 내부 여백까지 보정해 화살표의 왼쪽 선을 본문에 맞춘다. 클릭 영역은 44px 유지. */
+  margin-left: -17px;
+  color: var(--ac); border-radius: var(--rp);
+}
+.back-link:hover { background: var(--ac-bg); }
+.back-link:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
 .brand {
   display: flex; align-items: center; gap: var(--sp-sm);
   font-family: var(--font-head);
   font-size: 22px; font-weight: 900; letter-spacing: -.03em;
   color: var(--ac);
-  margin-bottom: var(--sp-xl);
 }
 .brand em { font-style: normal; }
 
@@ -173,7 +219,7 @@ h1 { font-size: 30px; line-height: 1.13; letter-spacing: -.02em; margin-bottom: 
 }
 @media (prefers-reduced-motion: reduce) {
   .form, .hero-copy { animation: none; }
-  .hero-slide-enter-active, .hero-slide-leave-active { transition: none; }
+  .hero-photo { transition: none; }
 }
 
 /* 시안은 lg 미만에서 사진을 통째로 숨긴다 */
@@ -186,6 +232,6 @@ h1 { font-size: 30px; line-height: 1.13; letter-spacing: -.02em; margin-bottom: 
   }
   .form { padding: var(--sp-sm) 0 var(--sp-lg); }
   h1 { font-size: 26px; }
-  .brand { margin-bottom: var(--sp-lg); }
+  .brand-row { margin-bottom: var(--sp-lg); }
 }
 </style>

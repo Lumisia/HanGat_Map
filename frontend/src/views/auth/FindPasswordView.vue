@@ -22,7 +22,7 @@ import {
   isValidEmail, checkEmail,
   EMAIL_INPUT_FILTER, EMAIL_INPUT_MESSAGE
 } from '../../utils/validators.js'
-import { checkPassword, normalizePassword } from '../../components/security/passwordPolicy.js'
+import { checkNewPassword as checkPassword, hasAllowedPasswordCharacters, PASSWORD_CHARACTER_MESSAGE } from '../../components/security/passwordPolicy.js'
 import { useUiStore } from '../../stores/ui.js'
 import { ApiError } from '../../api/errors.js'
 import { AUTH_HERO_IMAGES } from '../../data/authHeroImages.js'
@@ -149,7 +149,8 @@ const confirmError = computed(() => {
   if (pwFields.passwordConfirm) return pwFields.passwordConfirm
   if (!touched.passwordConfirm) return ''
   if (!pwForm.passwordConfirm) return '한 번 더 입력해 주세요'
-  if (normalizePassword(pwForm.password) !== normalizePassword(pwForm.passwordConfirm)) {
+  if (!hasAllowedPasswordCharacters(pwForm.passwordConfirm)) return PASSWORD_CHARACTER_MESSAGE
+  if (pwForm.password !== pwForm.passwordConfirm) {
     return '비밀번호가 서로 달라요'
   }
   return ''
@@ -158,7 +159,7 @@ const canReset = computed(() =>
   pw.value.ok &&
   !breachState.value.breached &&
   !!pwForm.passwordConfirm &&
-  normalizePassword(pwForm.password) === normalizePassword(pwForm.passwordConfirm) &&
+  pwForm.password === pwForm.passwordConfirm &&
   !busy.value
 )
 
@@ -202,7 +203,7 @@ const LEADS = {
 </script>
 
 <template>
-  <AuthLayout :title="TITLES[step]" :lead="LEADS[step]" :hero-images="AUTH_HERO_IMAGES">
+  <AuthLayout back-to="/login" back-label="로그인으로 돌아가기" :title="TITLES[step]" :lead="LEADS[step]" :hero-images="AUTH_HERO_IMAGES">
     <!-- ── 1단계: 코드 요청 ── -->
     <form v-if="step === 1" novalidate @submit.prevent="sendCode">
       <FieldText

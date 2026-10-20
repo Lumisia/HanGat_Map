@@ -4,6 +4,7 @@ import com.example.hangat.common.exception.BaseException;
 import com.example.hangat.common.model.BaseResponseStatus;
 import com.example.hangat.common.util.EmailNormalizer;
 import com.example.hangat.config.mail.AuthMailSender;
+import com.example.hangat.config.mail.WelcomeMailDispatcher;
 import com.example.hangat.config.security.token.TokenHasher;
 import com.example.hangat.user.model.auth.EmailVerificationToken;
 import com.example.hangat.user.model.User;
@@ -25,6 +26,7 @@ public class EmailVerificationService {
     private final EmailVerificationTokenRepository tokenRepository;
     private final UserRepository userRepository;
     private final AuthMailSender mailSender;
+    private final WelcomeMailDispatcher welcomeMail;
 
     // 토큰 발급 + 메일 발송
     @Transactional
@@ -54,7 +56,15 @@ public class EmailVerificationService {
             throw new BaseException(BaseResponseStatus.REQUEST_ERROR);
         }
         token.markUsed();
-        token.getUser().verifyEmail();
+
+        User user = token.getUser();
+        // verifyEmail() 은 멱등이라 링크를 두 번 눌러도 통과한다.
+        // 환영 메일은 멱등하지 않으므로 실제로 처음 인증되는 순간에만 보낸다.
+        boolean firstVerification = !user.isEmailVerified();
+        user.verifyEmail();
+        if (firstVerification) {
+            welcomeMail.sendAfterCommit(user.getEmail(), user.getNickname());
+        }
     }
 
     /**

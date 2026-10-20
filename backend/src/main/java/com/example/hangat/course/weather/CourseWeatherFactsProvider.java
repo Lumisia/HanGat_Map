@@ -7,7 +7,7 @@ import java.util.List;
 
 /**
  * Optional boundary for supplying already verified weather facts to AI input preparation.
- * No bean is registered until official region grids and forecast-base selection are available.
+ * The DB implementation uses official region grids and the team's latest-per-date query.
  */
 public interface CourseWeatherFactsProvider {
 

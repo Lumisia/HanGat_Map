@@ -13,6 +13,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import com.example.hangat.course.CourseSchedulePolicy;
 
 @Component
 public class CourseAiResultValidator {
@@ -50,14 +51,101 @@ public class CourseAiResultValidator {
             validateDay(input, day, scheduledDates, previousDate);
             previousDate = day.date();
             LocalTime previousTime = null;
+            String previousCandidateId = null;
             for (ItemDto item : day.items()) {
                 validateItem(item, candidatesById, scheduledByCandidate,
                         day.date(), previousTime);
+                validateSchedule(input, candidatesById, previousCandidateId, previousTime, item);
                 previousTime = item.startTime();
+                previousCandidateId = item.candidateId();
             }
         }
 
         validateRequired(input, candidatesById, scheduledByCandidate);
+        validateCongestionPolicy(input, candidatesById, scheduledByCandidate);
+        validateSelectedStyleCoverage(input, candidatesById, scheduledByCandidate);
+        if (input.trip().startDate().datesUntil(input.trip().endDate().plusDays(1))
+                .anyMatch(date -> !scheduledDates.contains(date))) {
+            fail(CourseAiValidationCode.AI_RESULT_TRIP_DATE_MISSING,
+                    "AI 코스 결과에 요청한 여행 날짜가 누락되었습니다.");
+        }
+    }
+
+    /** 카페 선택은 카페만 방문한다는 뜻은 아니지만, 확인된 카페를 최소 한 곳 포함한다. */
+    private void validateSelectedStyleCoverage(CourseAiInputDto input,
+            Map<String, CandidateFactDto> candidates,
+            Map<String, ScheduledItem> scheduled) {
+        if (!input.preferences().selectedStyleCodes().contains("CAFE")) return;
+        boolean cafeAvailable = candidates.values().stream().anyMatch(this::isCafe);
+        boolean cafeScheduled = scheduled.keySet().stream()
+                .map(candidates::get).filter(java.util.Objects::nonNull).anyMatch(this::isCafe);
+        if (!cafeAvailable) {
+            fail(CourseAiValidationCode.AI_RESULT_STYLE_CANDIDATE_MISSING,
+                    "카페 스타일을 유지할 확인된 카페 후보가 부족합니다.");
+        }
+        if (!cafeScheduled) {
+            fail(CourseAiValidationCode.AI_RESULT_SELECTED_STYLE_MISSING,
+                    "카페 스타일을 선택했고 확인된 카페 후보가 있으므로 일정에 카페가 필요합니다.");
+        }
+    }
+
+    private boolean isCafe(CandidateFactDto candidate) {
+        return "CAFE".equals(candidate.internalCategoryCode())
+                || candidate.styleHintCodes().contains("CAFE");
+    }
+
+    private void validateCongestionPolicy(CourseAiInputDto input,
+            Map<String, CandidateFactDto> candidates,
+            Map<String, ScheduledItem> scheduled) {
+        Set<String> required = input.hardConstraints().requiredCandidates().stream()
+                .map(RequiredCandidateConstraintDto::candidateId).collect(java.util.stream.Collectors.toSet());
+        for (Map.Entry<String, ScheduledItem> entry : scheduled.entrySet()) {
+            if (required.contains(entry.getKey())) continue; // WANT/fixed wins by the existing contract.
+            CandidateFactDto chosen = candidates.get(entry.getKey());
+            var chosenLevel = levelOn(chosen, entry.getValue().date());
+            if (chosenLevel != com.example.hangat.map.model.enums.CongestionLevel.CROWDED) continue;
+            boolean quieterAvailable = candidates.values().stream()
+                    .filter(candidate -> !scheduled.containsKey(candidate.candidateId()))
+                    .map(candidate -> levelOn(candidate, entry.getValue().date()))
+                    .anyMatch(level -> level == com.example.hangat.map.model.enums.CongestionLevel.QUIET
+                            || level == com.example.hangat.map.model.enums.CongestionLevel.NORMAL);
+            if (quieterAvailable) {
+                fail(CourseAiValidationCode.AI_RESULT_CONGESTION_POLICY_VIOLATION,
+                        "혼잡한 장소 대신 같은 날짜에 확인된 더 한산한 후보를 사용해야 합니다.");
+            }
+        }
+    }
+
+    private com.example.hangat.map.model.enums.CongestionLevel levelOn(CandidateFactDto candidate, LocalDate date) {
+        if (candidate == null || candidate.congestionFacts() == null) return null;
+        return candidate.congestionFacts().stream().filter(fact -> date.equals(fact.date()))
+                .map(CourseAiInputDto.CongestionFactDto::level).filter(java.util.Objects::nonNull)
+                .findFirst().orElse(null);
+    }
+
+    private void validateSchedule(CourseAiInputDto input, Map<String, CandidateFactDto> candidates,
+            String previousCandidateId, LocalTime previousTime, ItemDto item) {
+        CandidateFactDto current = candidates.get(item.candidateId());
+        int currentDwell = CourseSchedulePolicy.dwellMinutes(
+                input.preferences().selectedStyleCodes(),
+                current.styleHintCodes(), current.internalCategoryCode());
+        if (item.startTime().toSecondOfDay() / 60 + currentDwell
+                > CourseSchedulePolicy.DAY_END.toSecondOfDay() / 60) {
+            fail(CourseAiValidationCode.AI_RESULT_DAY_DURATION_EXCEEDED,
+                    "AI 코스 일정이 하루 운영 범위를 초과했습니다.");
+        }
+        if (previousCandidateId == null || previousTime == null) return;
+        CandidateFactDto previous = candidates.get(previousCandidateId);
+        int dwell = CourseSchedulePolicy.dwellMinutes(input.preferences().selectedStyleCodes(),
+                previous.styleHintCodes(), previous.internalCategoryCode());
+        int travel = input.travelFacts().stream()
+                .filter(fact -> previousCandidateId.equals(fact.fromRef()) && item.candidateId().equals(fact.toRef()))
+                .map(CourseAiInputDto.TravelFactDto::travelMinutes).filter(java.util.Objects::nonNull)
+                .findFirst().orElse(0);
+        if (item.startTime().toSecondOfDay()/60L < previousTime.toSecondOfDay()/60L + dwell + travel) {
+            fail(CourseAiValidationCode.AI_RESULT_TRAVEL_TIME_OVERLAP,
+                    "AI 코스 일정이 체류 및 추정 이동시간과 겹칩니다.");
+        }
     }
 
     private void validateInput(CourseAiInputDto input) {

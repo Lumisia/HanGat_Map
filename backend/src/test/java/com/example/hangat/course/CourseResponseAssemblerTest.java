@@ -14,7 +14,7 @@ import com.example.hangat.course.facts.UserConstraint;
 import com.example.hangat.course.facts.WeatherFact;
 import com.example.hangat.course.facts.WeatherFactSet;
 import com.example.hangat.course.model.AccommodationDto;
-import com.example.hangat.course.model.CongestionLevel;
+import com.example.hangat.map.model.enums.CongestionLevel;
 import com.example.hangat.course.model.CourseResponseDto;
 import com.example.hangat.course.model.PreferenceType;
 import com.example.hangat.course.model.entity.Course;
@@ -85,6 +85,7 @@ class CourseResponseAssemblerTest {
 
         assertThat(response.id()).isEqualTo(101L);
         assertThat(response.contractVersion()).isEqualTo("2.0");
+        assertThat(response.averageCongestionRate()).isEqualByComparingTo("33.00");
         assertThat(response.days()).singleElement().satisfies(day -> {
             assertThat(day.dayNo()).isEqualTo(1);
             assertThat(day.visitDate()).isEqualTo(visitDate);
@@ -236,9 +237,8 @@ class CourseResponseAssemblerTest {
                 "\"weather\":null",
                 "\"costs\":[]",
                 "\"has_cost_data\":false",
-                "\"total_expected\":null",
-                "\"over_budget\":null");
-        assertThat(json).doesNotContain("tour_category", "compatibility");
+                "\"total_expected\":null");
+        assertThat(json).doesNotContain("tour_category", "compatibility", "budget_total", "over_budget", "remaining_budget", "usage_rate");
     }
 
     @Test
@@ -254,8 +254,7 @@ class CourseResponseAssemblerTest {
                 visitDate);
         CourseBudgetCalculation budget = new CourseBudgetCalculation(
                 new CourseBudgetCalculation.BudgetSummary(
-                        true, 400000, 16000, 120000, 80000, 120000,
-                        136000, 264000, new BigDecimal("34.00"), false, 0),
+                        true, 16000, 120000, 80000, 120000, 136000, 0),
                 96000,
                 136000,
                 Map.of(201L, List.of(new CourseBudgetCalculation.CostLine(
@@ -273,9 +272,6 @@ class CourseResponseAssemblerTest {
         assertThat(response.estimatedCostMin()).isEqualTo(96000);
         assertThat(response.estimatedCostMax()).isEqualTo(136000);
         assertThat(response.budgetSummary().totalExpected()).isEqualTo(136000);
-        assertThat(response.budgetSummary().remainingBudget()).isEqualTo(264000);
-        assertThat(response.budgetSummary().usageRate()).isEqualByComparingTo("34.00");
-        assertThat(response.budgetSummary().overBudget()).isFalse();
         assertThat(response.days().get(0).items().get(0).costs()).singleElement()
                 .satisfies(cost -> {
                     assertThat(cost.id()).isEqualTo(501L);
@@ -396,9 +392,9 @@ class CourseResponseAssemblerTest {
         when(course.getStartDate()).thenReturn(visitDate);
         when(course.getEndDate()).thenReturn(visitDate.plusDays(2));
         when(course.getPeople()).thenReturn((short) 2);
-        when(course.getBudgetTotal()).thenReturn(400000);
         when(course.getTransport()).thenReturn(
                 com.example.hangat.course.model.enums.Transport.RENTAL_CAR);
+        when(course.getAverageCongestionRate()).thenReturn(new BigDecimal("33.00"));
 
         Map<String, CourseItem> items = new LinkedHashMap<>();
         for (int index = 0; index < candidateIds.size(); index++) {

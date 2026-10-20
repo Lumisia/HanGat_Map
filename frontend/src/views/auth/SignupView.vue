@@ -10,7 +10,7 @@
  *    같은 화면으로 넘어간 뒤, 그 주소로 안내 메일이 간다.
  *  · 닉네임 중복 확인은 남겼다. 닉네임은 후기·공유 화면에 그대로 노출되는 공개 식별자라
  *    존재 여부가 새어도 추가로 잃을 게 없다. 대신 호출량을 제한한다.
- *  · 비밀번호는 길이·강도·유출 이력으로 판단하고, 문자 종류 조합은 강제하지 않는다.
+ *  · 새 비밀번호는 영문·숫자·특수문자만 허용하고 기존 길이·조합·강도·유출 검사를 유지한다.
  */
 import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -22,7 +22,7 @@ import {
   checkNickname, isValidEmail, checkEmail,
   EMAIL_INPUT_FILTER, EMAIL_INPUT_MESSAGE
 } from '../../utils/validators.js'
-import { checkPassword, normalizePassword } from '../../components/security/passwordPolicy.js'
+import { checkNewPassword as checkPassword, hasAllowedPasswordCharacters, PASSWORD_CHARACTER_MESSAGE } from '../../components/security/passwordPolicy.js'
 import { putHandoff } from '../../utils/handoff.js'
 import { ApiError } from '../../api/errors.js'
 import { AUTH_HERO_IMAGES } from '../../data/authHeroImages.js'
@@ -64,7 +64,8 @@ const pwConfirmError = computed(() => {
   if (serverFields.passwordConfirm) return serverFields.passwordConfirm
   if (!touched.passwordConfirm) return ''
   if (!form.passwordConfirm) return '비밀번호 확인을 입력해 주세요'
-  if (normalizePassword(form.password) !== normalizePassword(form.passwordConfirm)) {
+  if (!hasAllowedPasswordCharacters(form.passwordConfirm)) return PASSWORD_CHARACTER_MESSAGE
+  if (form.password !== form.passwordConfirm) {
     return '비밀번호가 서로 달라요'
   }
   return ''
@@ -84,7 +85,7 @@ const canSubmit = computed(() =>
   pw.value.ok &&
   !breachState.value.breached &&
   !!form.passwordConfirm &&
-  normalizePassword(form.password) === normalizePassword(form.passwordConfirm) &&
+  form.password === form.passwordConfirm &&
   nick.value.ok &&
   dupNick.state !== 'taken' &&
   !busy.value
@@ -132,6 +133,8 @@ async function submit () {
 
 <template>
   <AuthLayout
+    back-to="/login"
+    back-label="로그인으로 돌아가기"
     title="한갓지도 시작하기"
     lead="가입하면 코스 저장 · 장소 찜 · 리뷰 작성을 쓸 수 있어요."
     :hero-images="AUTH_HERO_IMAGES"

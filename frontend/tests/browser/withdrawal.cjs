@@ -1,0 +1,67 @@
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const assert=require('node:assert/strict');
+const {join}=require('node:path');
+const {tmpdir}=require('node:os');
+const base=process.env.WITHDRAWAL_PREVIEW_URL || 'http://127.0.0.1:5211/tests/browser/withdrawal.html';
+(async()=>{
+ const browser=await chromium.launch({headless:true});
+ try {
+  for(const width of [1440,390,320]){
+   const page=await browser.newPage({viewport:{width,height:1000},isMobile:width<768,hasTouch:width<768});
+   await page.goto(base);
+   const opener=page.getByRole('button',{name:'회원탈퇴',exact:true});
+   await opener.click();
+   const dialog=page.getByRole('dialog');
+   await dialog.waitFor();
+   await page.waitForFunction(()=>document.activeElement?.textContent==='취소');
+   const submit=dialog.getByRole('button',{name:'회원탈퇴',exact:true});
+   assert.equal(await submit.isEnabled(),false);
+   await dialog.getByLabel('본인 이메일을 입력해 주세요').fill('wrong@example.com');
+   assert.equal(await submit.isEnabled(),false);
+   await page.keyboard.press('Escape');
+   assert.equal(await opener.evaluate(e=>e===document.activeElement),true);
+   await opener.click();
+   await dialog.getByLabel('본인 이메일을 입력해 주세요').fill('TRAVELER@example.com');
+   assert.equal(await submit.isEnabled(),true);
+   assert.ok(await page.evaluate(w=>document.documentElement.scrollWidth<=w,width));
+   await page.screenshot({path:join(tmpdir(),`hangat-withdrawal-${width}.png`),animations:'disabled'});
+   await page.evaluate(()=>{window.qaFailWithdrawal=true});
+   await submit.click();
+   await dialog.getByRole('alert').waitFor();
+   assert.match(await dialog.innerText(),/이메일을 확인/);
+   await page.evaluate(()=>{window.qaFailWithdrawal=false;window.qaWaitWithdrawal=true});
+   await submit.click();
+   assert.equal(await dialog.getByRole('button',{name:'취소',exact:true}).isEnabled(),false);
+   await page.keyboard.press('Escape');
+   assert.equal(await dialog.count(),1);
+   await page.evaluate(()=>window.qaResolveWithdrawal());
+   await page.getByRole('status').filter({hasText:'회원탈퇴가 처리되었어요'}).waitFor();
+   assert.equal(await page.evaluate(()=>window.qaCalls.filter(c=>c.path.endsWith('/users/me/withdrawal')).length),2);
+   await page.goto(base+'?recovery=1');
+   await page.getByText('traveler@example.com',{exact:true}).waitFor();
+   assert.ok(await page.evaluate(w=>document.documentElement.scrollWidth<=w,width));
+   await page.screenshot({path:join(tmpdir(),`hangat-recovery-${width}.png`),animations:'disabled'});
+   await page.getByRole('button',{name:'아니오',exact:true}).click();
+   await page.getByRole('status').filter({hasText:'탈퇴 상태를 유지했어요'}).waitFor();
+   assert.ok(await page.evaluate(()=>window.qaCalls.some(c=>c.path.endsWith('/withdrawal/decline'))));
+   await page.goto(base+'?recovery=1');
+   await page.getByRole('button',{name:'예',exact:true}).click();
+   await page.getByRole('status').filter({hasText:'회원탈퇴를 취소했어요'}).waitFor();
+   await page.close();
+  }
+  const page=await browser.newPage();
+  await page.goto(base+'?demo=1');
+  await page.getByText('데모 계정은 회원탈퇴할 수 없어요.').waitFor();
+  assert.equal(await page.getByRole('button',{name:'회원탈퇴',exact:true}).count(),0);
+  await page.goto(base+'?recovery=1&expired=1');
+  await page.getByRole('alert').waitFor();
+  assert.equal(await page.getByText('traveler@example.com',{exact:true}).count(),0);
+  await page.goto(base+'?login=1');
+  await page.getByLabel('이메일',{exact:false}).first().fill('traveler@example.com');
+  await page.locator('input[autocomplete="current-password"]').fill('test-password');
+  await page.getByRole('button',{name:'이메일로 로그인',exact:true}).click();
+  await page.getByText('traveler@example.com',{exact:true}).waitFor();
+  assert.ok(await page.getByRole('button',{name:'예',exact:true}).isVisible());
+  console.log('Withdrawal/recovery PC, 390/320px, email check, focus, busy, errors, demo, login and 204 decisions passed');
+ }finally{await browser.close()}
+})().catch(e=>{console.error(e);process.exit(1)});

@@ -33,6 +33,9 @@ import java.util.Optional;
  * 화면을 비우지 않게.
  */
 @Component
+@org.springframework.context.annotation.Profile("!batch")
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+        name = "hangat.scheduling.enabled", havingValue = "true", matchIfMissing = true)
 public class WeatherIngestScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(WeatherIngestScheduler.class);

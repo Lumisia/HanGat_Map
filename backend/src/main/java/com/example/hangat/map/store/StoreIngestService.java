@@ -1,13 +1,16 @@
 package com.example.hangat.map.store;
 
+import com.example.hangat.map.place.PlacePresenceReconciler;
 import com.example.hangat.map.store.SbizStoreClient.StoreItem;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 카페·편의점·마트 적재 (MAP-04 나머지) - 소상공인 상가정보 → places.
@@ -26,14 +29,18 @@ public class StoreIngestService {
 
     private final SbizStoreClient client;
     private final StoreIngestWriter writer;
+    private final PlacePresenceReconciler reconciler;
 
-    public StoreIngestService(SbizStoreClient client, StoreIngestWriter writer) {
+    public StoreIngestService(SbizStoreClient client, StoreIngestWriter writer,
+                              PlacePresenceReconciler reconciler) {
         this.client = client;
         this.writer = writer;
+        this.reconciler = reconciler;
     }
 
     public record StoreIngestResult(Map<String, Integer> fetched, int inserted, int unchanged,
-                                    int skippedNoCoord, int skippedRegion) {
+                                    int skippedNoCoord, int skippedRegion,
+                                    PlacePresenceReconciler.Result presence) {
     }
 
     public StoreIngestResult ingest() {
@@ -42,11 +49,15 @@ public class StoreIngestService {
         int unchanged = 0;
         int noCoord = 0;
         int noRegion = 0;
+        Set<String> seen = new HashSet<>();   // 출석 체크용 - 좌표·권역으로 거르기 전의 상가 ID 전부
 
         for (Map.Entry<String, String> e : UPJONG_TO_CATEGORY.entrySet()) {
             List<StoreItem> items = client.fetchAll(e.getKey());
             fetched.put(e.getValue(), items.size());
             for (StoreItem item : items) {
+                if (item.bizesId() != null) {
+                    seen.add(item.bizesId());
+                }
                 if (item.latitude() == null || item.longitude() == null) {
                     noCoord++;
                     continue;
@@ -58,7 +69,8 @@ public class StoreIngestService {
                 }
             }
         }
-        StoreIngestResult result = new StoreIngestResult(fetched, inserted, unchanged, noCoord, noRegion);
+        PlacePresenceReconciler.Result presence = reconciler.reconcile(StoreIngestWriter.SOURCE, seen);
+        StoreIngestResult result = new StoreIngestResult(fetched, inserted, unchanged, noCoord, noRegion, presence);
         log.info("소상공인 적재 완료 {}", result);
         return result;
     }

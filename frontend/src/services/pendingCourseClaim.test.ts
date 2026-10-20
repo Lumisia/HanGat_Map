@@ -14,7 +14,7 @@ Object.defineProperty(globalThis, 'sessionStorage', {
 
 const condition: CourseCondition = {
   start_date: '2026-09-01', end_date: '2026-09-02', people: 2,
-  budget_total: 300000, transport: 'RENTAL_CAR',
+  transport: 'RENTAL_CAR',
   course_regions: [], course_styles: [], course_place_preferences: [],
 }
 

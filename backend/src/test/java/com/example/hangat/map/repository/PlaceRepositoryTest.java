@@ -227,6 +227,47 @@ class PlaceRepositoryTest {
     }
 
     @Test
+    void 검색은_이름이_같은_급이면_관광지를_먼저_두고_태그로도_찾는다() {
+        // 2026-09-14 백엔드 단일화: "오름" 검색에 식당 '오름가든'(접두)이 관광지 '개오름'(포함)보다 위로 오던 것을 뒤집는다.
+        // 태그(세부분류)로도 찾는다 - '한라산'은 이름에 오름이 없어도 태그 '산, 고개, 오름, 봉우리'로 잡힌다
+        placeWithCoords("오름가든", food, null);
+        placeWithCoords("개오름", tourist, null);
+        Place 한라산 = placeWithCoords("한라산", tourist, null);
+        em.persist(PlaceTag.fromApi(한라산, 오름));
+        em.flush();
+        em.clear();
+
+        List<PlaceListResponse> found = placeRepository.searchList("오름", null, PageRequest.of(0, 20));
+
+        // 이름 매칭(개오름·오름가든) 중 관광지 먼저, 태그 매칭(한라산)은 이름 매칭 뒤
+        assertThat(names(found)).containsExactly("개오름", "오름가든", "한라산");
+    }
+
+    @Test
+    void 이름_길이는_괄호_주석을_빼고_잰다() {
+        // "성산" 검색에 성산일출봉 [유네스코 세계자연유산](본이름 5자)이 성산세화해안도로(8자)보다 위 - 괄호까지 세면 뒤로 밀린다
+        placeWithCoords("성산세화해안도로", tourist, null);
+        placeWithCoords("성산일출봉 [유네스코 세계자연유산]", tourist, null);
+        em.flush();
+        em.clear();
+
+        assertThat(names(placeRepository.searchList("성산", null, PageRequest.of(0, 20))))
+                .containsExactly("성산일출봉 [유네스코 세계자연유산]", "성산세화해안도로");
+    }
+
+    @Test
+    void 관광지는_소개글로_매칭하지_않는다() {
+        // 관광지 소개글은 긴 문장이라 "라면"이 "…이라면…"에 걸려 엉뚱한 섬·오름이 라면 검색에 나왔다. 업소 overview(대표메뉴)는 그대로 찾는다
+        placeWithCoords("서건도", tourist, "물때가 맞는다라면 걸어서 들어갈 수 있는 섬");
+        placeWithCoords("바다식당", food, "대표메뉴: 해물라면 8,000원");
+        em.flush();
+        em.clear();
+
+        assertThat(names(placeRepository.searchList("라면", null, PageRequest.of(0, 20))))
+                .containsExactly("바다식당");
+    }
+
+    @Test
     void 검색은_좌표없는_장소와_폐업을_뺀다() {
         // 결과 클릭 = 지도 이동이라 좌표 없는 곳은 데려갈 수 없다
         place("좌표없는국수집", food, false, BusinessStatus.OPEN);
@@ -278,6 +319,24 @@ class PlaceRepositoryTest {
                 .contains("동부국수", "서부국수").doesNotContain("국수오름");
     }
 
+    @Test
+    void 검색은_이스케이프된_퍼센트와_밑줄을_글자로_취급한다() {
+        // 서비스(PlaceService.escapeLike)가 '!' 로 이스케이프해 넘긴다는 전제 - 쿼리의 escape '!' 가 그걸 받는다
+        placeWithCoords("50%할인마트", food, null);
+        placeWithCoords("50점만점식당", food, null);   // 이스케이프 없으면 '50%' 에 매칭돼 같이 나온다
+        placeWithCoords("a_b국수", food, null);
+        placeWithCoords("aXb국수", food, null);       // 이스케이프 없으면 'a_b' 의 _ 가 X 에 매칭된다
+        em.flush();
+        em.clear();
+
+        assertThat(names(placeRepository.searchList("50!%", null, PageRequest.of(0, 20))))
+                .containsExactly("50%할인마트");
+        assertThat(names(placeRepository.searchList("a!_b", null, PageRequest.of(0, 20))))
+                .containsExactly("a_b국수");
+        // 이스케이프한 전체 와일드카드("%%" → "!%!%")는 실제로 '%%' 가 들어간 이름에만 맞는다 - 전부 매칭이 아니다
+        assertThat(placeRepository.searchList("!%!%", null, PageRequest.of(0, 20))).isEmpty();
+    }
+
     private Place placeWithCoords(String name, PlaceCategory category, String overview) {
         Place place = Place.builder()
                 .region(west).primaryCategory(category)
@@ -306,5 +365,21 @@ class PlaceRepositoryTest {
 
     private PlaceListResponse findByName(List<PlaceListResponse> places, String name) {
         return places.stream().filter(p -> name.equals(p.getName())).findFirst().orElseThrow();
+    }
+
+    @Test
+    void 대안_후보에서_폐업_장소는_빠진다() {
+        em.persist(Place.builder().region(west).primaryCategory(tourist).name("열린곳").normalizedName("열린곳")
+                .latitude(new BigDecimal("33.40")).longitude(new BigDecimal("126.30")).build());
+        Place closed = Place.builder().region(west).primaryCategory(tourist).name("닫힌곳").normalizedName("닫힌곳")
+                .latitude(new BigDecimal("33.41")).longitude(new BigDecimal("126.31")).build();
+        closed.markClosed();
+        em.persist(closed);
+        em.flush();
+
+        List<Place> found = placeRepository.findCandidatesInBox("TOURIST",
+                new BigDecimal("33.0"), new BigDecimal("34.0"), new BigDecimal("126.0"), new BigDecimal("127.0"));
+
+        assertThat(found).extracting(Place::getName).containsExactly("열린곳");
     }
 }

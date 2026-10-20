@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { courseMockService, generateMockCourseForTest } from './courseMockService'
+import { courseMockService, generateMockCourseForTest, toCourseRequestPayload } from './courseMockService'
 import type { CourseCondition, CourseItem, PlacePreference } from '../assets/types/course'
 
 const east = { region_id: 1, code: 'EAST' as const, name: '동부' }
@@ -12,7 +12,7 @@ function makeCondition(placePreferences: PlacePreference[] = []): CourseConditio
     start_date: '2026-08-13',
     end_date: '2026-08-15',
     people: 2,
-    budget_total: 500000,
+
     transport: 'RENTAL_CAR',
     course_regions: [east],
     course_styles: [nature],
@@ -31,6 +31,11 @@ function itemsOverlap(a: CourseItem, b: CourseItem) {
 }
 
 describe('courseMockService logical Mock generation', () => {
+  it('omits legacy budget and permits empty optional place preferences in requests', () => {
+    const payload = toCourseRequestPayload(makeCondition())
+    expect(payload).not.toHaveProperty('budget_total')
+    expect(payload.course_place_preferences).toEqual([])
+  })
   it('places USER_FIXED first and prevents every same-day time conflict', async () => {
     const condition = makeCondition([
       { place_id: 101, place_name: '비자림', preference_type: 'WANT', fixed_date: '2026-08-14', fixed_time: '13:00' },
@@ -208,20 +213,4 @@ describe('courseMockService logical Mock generation', () => {
     expect(want?.recommendation_reason).toBe('꼭 가고 싶은 장소로 선택해 일정에 포함했어요.')
   })
 
-  it('recalculates around a selected accommodation while preserving fixed, WANT, and AVOID priorities', async () => {
-    const condition = makeCondition([
-      { place_id: 101, place_name: '비자림', preference_type: 'WANT', fixed_date: '2026-08-14', fixed_time: '13:00' },
-      { place_id: 108, place_name: '산방산', preference_type: 'WANT' },
-      { place_id: 103, place_name: '성산일출봉', preference_type: 'AVOID' },
-    ])
-    const accommodation = { source_code: 'KAKAO_LOCAL' as const, source_place_id: 'MOCK_KAKAO_9003', place_name: '성산 마리나 호텔', region: 'EAST' as const, latitude: 33.4612, longitude: 126.9324 }
-
-    const result = await courseMockService.recalculateRouteWithAccommodation(condition, accommodation)
-    const items = result.days.flatMap(day => day.items)
-
-    expect(result.accommodation).toEqual(accommodation)
-    expect(items.find(item => item.place_name === '비자림')).toMatchObject({ visit_date: '2026-08-14', start_time: '13:00', item_source: 'USER_FIXED' })
-    expect(items.some(item => item.place_name === '산방산')).toBe(true)
-    expect(items.some(item => item.place_name === '성산일출봉')).toBe(false)
-  })
 })

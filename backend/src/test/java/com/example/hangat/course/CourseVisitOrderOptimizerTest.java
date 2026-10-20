@@ -77,7 +77,7 @@ class CourseVisitOrderOptimizerTest {
     void doesNotReorderNonCarTransportOrMoveCandidatesAcrossDays() throws Exception {
         CourseRequestDto publicTransit = mapper.readValue("""
                 {"start_date":"2026-09-03","end_date":"2026-09-04","people":2,
-                 "budget_total":300000,"transport":"PUBLIC_TRANSIT","course_regions":[],
+                 "transport":"PUBLIC_TRANSIT","course_regions":[],
                  "course_styles":[{"code":"NATURE","weight":1}],"course_place_preferences":[]}
                 """, CourseRequestDto.class);
         CourseGenerationFacts facts = facts(
@@ -123,7 +123,7 @@ class CourseVisitOrderOptimizerTest {
     private CourseRequestDto request() throws Exception {
         return mapper.readValue("""
                 {"start_date":"2026-09-03","end_date":"2026-09-03","people":2,
-                 "budget_total":300000,"transport":"RENTAL_CAR","course_regions":[],
+                 "transport":"RENTAL_CAR","course_regions":[],
                  "course_styles":[{"code":"NATURE","weight":1}],
                  "course_place_preferences":[]}
                 """, CourseRequestDto.class);
@@ -132,7 +132,7 @@ class CourseVisitOrderOptimizerTest {
     private CourseRequestDto requestWithAccommodation() throws Exception {
         return mapper.readValue("""
                 {"start_date":"2026-09-03","end_date":"2026-09-03","people":2,
-                 "budget_total":300000,"transport":"RENTAL_CAR","course_regions":[],
+                 "transport":"RENTAL_CAR","course_regions":[],
                  "course_styles":[{"code":"NATURE","weight":1}],
                  "course_place_preferences":[],"accommodation":{
                    "source_code":"KAKAO_LOCAL","source_place_id":"stay-1",

@@ -7,7 +7,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.Optional;
 
 /**
@@ -36,9 +38,13 @@ public class GoodPriceIngestService {
      * @param inserted 새로 만든 장소 수
      * @param skippedGeo 지오코딩 실패로 뺀 수 (좌표 없이는 지도에 못 찍는다)
      * @param skippedRegion 권역 판정 불가(추자도 등)로 뺀 수
+     * @param refreshed     CSV 내용이 바뀌어 메뉴·가격·기준일을 갱신한 수
+     * @param cleared       CSV 에서 빠져 지정을 해제한 수
+     * @param clearSkipped  CSV 수신이 부족해 해제를 보류함 - 배치는 이 경우를 실패로 기록한다
      */
     public record GoodPriceResult(int totalCsv, int food, int matched, int inserted,
-                                  int skippedGeo, int skippedRegion, int unchanged) {
+                                  int skippedGeo, int skippedRegion, int unchanged,
+                                  int refreshed, int cleared, boolean clearSkipped) {
     }
 
     public GoodPriceResult ingest() {
@@ -56,11 +62,18 @@ public class GoodPriceIngestService {
         int skippedGeo = 0;
         int skippedRegion = 0;
         int unchanged = 0;
+        int refreshed = 0;
+        Set<String> seen = new HashSet<>();   // 이번 CSV 에 있는 업소 - 끝나고 빠진 업소를 해제한다
 
         for (Row row : food) {
+            seen.add(GoodPriceIngestWriter.sourceIdOf(row));
             GoodPriceIngestWriter.Outcome outcome = writer.upsertMatched(row);
             if (outcome == GoodPriceIngestWriter.Outcome.MATCHED) {
                 matched++;
+                continue;
+            }
+            if (outcome == GoodPriceIngestWriter.Outcome.REFRESHED) {
+                refreshed++;
                 continue;
             }
             if (outcome == GoodPriceIngestWriter.Outcome.ALREADY) {
@@ -81,8 +94,11 @@ public class GoodPriceIngestService {
             }
         }
 
+        // CSV 에서 빠진 업소 해제 - 저장이 다 끝난 뒤 한 번
+        GoodPriceIngestWriter.ClearResult cleared = writer.clearMissing(seen);
         GoodPriceResult result = new GoodPriceResult(
-                all.size(), food.size(), matched, inserted, skippedGeo, skippedRegion, unchanged);
+                all.size(), food.size(), matched, inserted, skippedGeo, skippedRegion, unchanged,
+                refreshed, cleared.cleared(), cleared.skipped());
         log.info("착한가격 적재 완료 {}", result);
         return result;
     }

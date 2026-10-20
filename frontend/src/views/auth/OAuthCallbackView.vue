@@ -119,6 +119,7 @@ async function finishLogin (login = null) {
 
   screen.value = 'completed'
   ui.toast(`${auth.displayName}님, 반가워요`)
+  auth.returnTo = null
   await router.replace(returnTo)
 }
 
@@ -225,7 +226,7 @@ async function cancel () {
     // 취소는 멱등 동작이므로 서버 흐름이 이미 끝났어도 로그인 화면으로 이동한다.
   } finally {
     busy.value = false
-    await router.replace({ name: 'login' })
+    await router.replace({ name: 'login', query: { redirect: returnTo } })
   }
 }
 </script>

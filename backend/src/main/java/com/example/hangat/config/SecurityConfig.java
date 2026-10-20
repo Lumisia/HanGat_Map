@@ -16,10 +16,10 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.util.matcher.RegexRequestMatcher;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -35,6 +35,7 @@ import java.util.List;
  */
 @EnableWebSecurity
 @Configuration
+@ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 public class SecurityConfig {
 
     private final List<String> allowedOrigins;
@@ -114,13 +115,17 @@ public class SecurityConfig {
                 session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
 
         http.authorizeHttpRequests(auth -> auth
-                // 예외 처리중 /error가 다시 인증에 막히는 것을 방지
-                .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+                // 예외 처리중 /error가 다시 인증에 막히는 것을 방지 + ASYNC도 포함.
+                .dispatcherTypeMatchers(
+                        DispatcherType.ERROR,
+                        DispatcherType.ASYNC
+                ).permitAll()
 
                 // 운영 및 API 문서
                 .requestMatchers(
                         "/actuator/health",
-                        "/actuator/health/**"
+                        "/actuator/health/**",
+                        "/actuator/info"
                 ).permitAll()
                 .requestMatchers(
                         "/v3/api-docs/**",
@@ -130,6 +135,7 @@ public class SecurityConfig {
 
                 // 비회원 공개 API
                 .requestMatchers("/main/**").permitAll()
+                .requestMatchers(HttpMethod.GET, "/shared-courses/*").permitAll()
                 .requestMatchers("/auth/**").permitAll()
                 .requestMatchers(
                         HttpMethod.GET,
@@ -147,7 +153,8 @@ public class SecurityConfig {
                 ).permitAll()
                 .requestMatchers(
                         HttpMethod.POST,
-                        "/courses/*/accommodations/search"
+                        "/courses/*/accommodations/search",
+                        "/courses/*/claim/renew"
                 ).permitAll()
                 // READY 숙소 변경은 서비스가 course-scoped claim proof를 검증한다.
                 // SAVED 코스는 같은 공개 경로에서도 로그인 owner만 통과한다.
@@ -163,7 +170,8 @@ public class SecurityConfig {
                 ).permitAll()
                 .requestMatchers(
                         HttpMethod.GET,
-                        "/courses/*/routes/car"
+                        "/courses/*/routes/car",
+                        "/courses/*/routes/transit"
                 ).permitAll()
                 // 스왑(#과밀지역우회)은 비회원 코스에도 열려 있어야 한다 - 생성이 비로그인 허용이라
                 // 생성 직후 대안 교체까지가 한 흐름이다. 소유자 있는 저장 코스는 서비스가 본인 검증
@@ -172,6 +180,9 @@ public class SecurityConfig {
                         "/courses/*/items/*/swap"
                 ).permitAll()
 
+                // 숫자 회원 ID의 사진 GET/HEAD만 공개한다. /users/me 및 사진 변경 권한은 열지 않는다.
+                .requestMatchers(new RegexRequestMatcher("^/users/[1-9][0-9]*/profile-image/[^/?]+$", "GET"),
+                        new RegexRequestMatcher("^/users/[1-9][0-9]*/profile-image/[^/?]+$", "HEAD")).permitAll()
                 // 그 외 API는 인증 필요
                 // 공개 후기 여부/미첨부 사진의 소유권은 ReviewPhotoService에서 검사한다.
                 .requestMatchers(HttpMethod.GET,
@@ -199,9 +210,10 @@ public class SecurityConfig {
     @Bean
     public JwtAuthenticationFilter jwtAuthenticationFilter(
             JwtProvider jwtProvider,
-            JwtAuthenticationEntryPoint entryPoint) {
+            JwtAuthenticationEntryPoint entryPoint,
+            com.example.hangat.user.repository.UserRepository users) {
 
-        return new JwtAuthenticationFilter(jwtProvider, entryPoint);
+        return new JwtAuthenticationFilter(jwtProvider, entryPoint, users);
     }
 
     @Bean
@@ -217,8 +229,4 @@ public class SecurityConfig {
         return source;
     }
 
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
 }

@@ -38,6 +38,34 @@ class CourseAiInputAssemblerTest {
     private final CourseAiInputAssembler assembler = new CourseAiInputAssembler();
 
     @Test
+    void marksIndoorCandidatesByNameKeywordForRainyDayPlacement() throws Exception {
+        // 실내 여부는 컬럼이 아니라 이름 키워드 휴리스틱(IndoorClassifier) - 배치 코스와 같은 목록으로 Gemini 입력에 실린다
+        CourseRequestDto request = kakaoWantRequest(
+                "사용자 지정 카페", "KAKAO-777", "제주특별자치도 제주시 구좌읍 월정리 1");
+        CourseCandidateDto outdoor = new CourseCandidateDto(
+                tourPlace("125266", "비자림", "제주특별자치도 제주시 구좌읍 비자숲길 55"),
+                List.of(congestion("20260827", "42.50")), null, List.of("NATURE"));
+        CourseCandidateDto indoor = new CourseCandidateDto(
+                tourPlace("125267", "제주민속자연사박물관", "제주특별자치도 제주시 삼성로 40"),
+                List.of(congestion("20260827", "35.00")), null, List.of("CULTURE"));
+        CourseGenerationFactsAssembler.Assembly facts = new CourseGenerationFactsAssembler()
+                .assemble(request, List.of(outdoor, indoor),
+                        new CourseWeatherFacts(Map.of(), List.of()), List.of());
+
+        CourseAiInputDto result = assembler.assemble(
+                request, facts, new GenerationMetadataDto(GenerationReason.INITIAL, "course-ai-v2", "ref"));
+        JsonNode candidates = objectMapper.readTree(objectMapper.writeValueAsString(result)).path("candidates");
+
+        Map<String, Boolean> indoorByName = new java.util.HashMap<>();
+        candidates.forEach(node -> indoorByName.put(node.path("name").asText(), node.path("indoor").asBoolean()));
+        assertThat(indoorByName)
+                .containsEntry("비자림", false)
+                .containsEntry("제주민속자연사박물관", true)
+                .containsEntry("사용자 지정 카페", true);
+        candidates.forEach(node -> assertThat(node.path("indoor").isBoolean()).isTrue());
+    }
+
+    @Test
     void serializesProviderNeutralProductionContractFromGenerationFacts() throws Exception {
         CourseRequestDto request = kakaoWantRequest(
                 "사용자 지정 카페",
@@ -179,7 +207,6 @@ class CourseAiInputAssemblerTest {
 
         assertThat(result.tripCondition().startDate()).isEqualTo(LocalDate.of(2026, 8, 27));
         assertThat(result.tripCondition().people()).isEqualTo(2);
-        assertThat(result.tripCondition().budgetTotal()).isEqualTo(500000);
         assertThat(result.tripCondition().transport()).isEqualTo(Transport.RENTAL_CAR);
         assertThat(result.userPreferences().selectedRegions()).extracting("code").containsExactly("EAST");
         assertThat(result.userPreferences().selectedStyles()).extracting("code").containsExactly("NATURE");
@@ -380,7 +407,6 @@ class CourseAiInputAssemblerTest {
                   "start_date": "2026-08-27",
                   "end_date": "2026-08-29",
                   "people": 2,
-                  "budget_total": 500000,
                   "transport": "RENTAL_CAR",
                   "course_regions": [
                     {"region_id": 2, "code": "EAST", "name": "동부"}
@@ -425,7 +451,6 @@ class CourseAiInputAssemblerTest {
                   "start_date": "2026-08-27",
                   "end_date": "2026-08-29",
                   "people": 2,
-                  "budget_total": 500000,
                   "transport": "RENTAL_CAR",
                   "course_regions": [
                     {"region_id": 2, "code": "EAST", "name": "동부"}

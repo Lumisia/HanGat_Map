@@ -64,10 +64,15 @@ class CourseQueryApiTest {
     @Autowired CourseCommandService commandService;
     @Autowired CourseRepository courseRepository;
     @Autowired CourseItemRepository itemRepository;
+    @Autowired com.example.hangat.course.CourseBudgetService budgets;
+    @Autowired com.example.hangat.course.repository.CourseItemCostRepository costs;
+    @Autowired com.fasterxml.jackson.databind.ObjectMapper mapper;
     @Autowired PlaceRepository placeRepository;
     @Autowired CongestionForecastRepository forecastRepository;
     @Autowired RegionRepository regionRepository;
     @Autowired PlaceCategoryRepository categoryRepository;
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    com.example.hangat.course.DbCourseWeatherFactsProvider weatherProvider;
 
     private PlaceCategory tourist;
     private DataSource source;
@@ -78,8 +83,58 @@ class CourseQueryApiTest {
     private Course 임시코스;      // 소유자 없음 - 공개
     private Course 저장코스;      // 주인 소유
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "대표메뉴: 국수 0원", "대표메뉴: 국수 -5000원", "대표메뉴: 국수 8,00원",
+            "대표메뉴: 국수 999999999999999999999원", "대표메뉴: 국수 2147483647원",
+            "대표메뉴: 국수 8,000원 · 가격 문의", "입장료는 대략 5000원입니다"
+    })
+    void untrustedOrUnusableMenuPricesStayUnknown(String overview) {
+        itemRepository.findItemsWithPlace(저장코스.getId()).get(0).getPlace().markGoodPrice(출발일, overview, null);
+        var detail = mapper.valueToTree(queryService.detail(저장코스.getId(), 주인.getId()));
+        assertThat(detail.path("budget_summary").path("has_cost_data").asBoolean()).isFalse();
+        assertThat(detail.path("budget_summary").path("total_expected_max").isNull()).isTrue();
+        assertThat(detail.path("budget_summary").has("budget_total")).isFalse();
+    }
+
+    @Test
+    void legacySavedCourseReturnsBudgetAndEvidenceBasedEstimateWithoutWritingOnRead() throws Exception {
+        var items = itemRepository.findItemsWithPlace(저장코스.getId());
+        items.get(0).getPlace().markGoodPrice(출발일, "대표메뉴: 국수 8,000원 · 정식 12,000원", null);
+        em.flush();
+        long before = costs.count();
+        var detail = mapper.valueToTree(queryService.detail(저장코스.getId(), 주인.getId()));
+        assertThat(detail.has("budget_total")).isFalse();
+        assertThat(detail.path("budget_summary").path("estimated_min").asInt()).isEqualTo(16000);
+        assertThat(detail.path("budget_summary").path("estimated_max").asInt()).isEqualTo(24000);
+        assertThat(detail.path("budget_summary").path("verified_total").asInt()).isZero();
+        assertThat(detail.path("days").get(0).path("items").get(0).path("costs").get(0).path("accuracy_type").asText()).isEqualTo("ESTIMATED");
+        var card = mapper.valueToTree(queryService.savedCourses(주인.getId(), PageRequest.of(0, 10)).getContent().get(0));
+        assertThat(card.has("budget_total")).isFalse();
+        assertThat(costs.count()).isEqualTo(before);
+    }
+
+    @Test
+    void costCalculationPersistsMenuEstimateOnceAndKeepsUnknownPlacesUnknown() throws Exception {
+        var items = itemRepository.findItemsWithPlace(임시코스.getId());
+        items.get(0).getPlace().markGoodPrice(출발일, "대표메뉴: 국수 8,000원", null);
+        var result = budgets.calculateAndCache(임시코스.getId());
+        assertThat(result.totalExpectedMax()).isEqualTo(16000);
+        assertThat(result.summary().unknownCount()).isEqualTo(2);
+        budgets.calculateAndCache(임시코스.getId());
+        assertThat(costs.findByCourseId(임시코스.getId())).hasSize(3);
+        mockMvc.perform(get("/courses/{id}", 임시코스.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result.budget_summary.budget_total").doesNotExist())
+                .andExpect(jsonPath("$.result.budget_summary.estimated_max").value(16000))
+                .andExpect(jsonPath("$.result.budget_summary.unknown_count").value(2));
+    }
+
     @BeforeEach
     void seed() {
+        org.mockito.Mockito.when(weatherProvider.loadDates(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anySet()))
+                .thenReturn(com.example.hangat.course.weather.CourseWeatherFacts.empty());
         forecastRepository.deleteAll();
 
         east = regionRepository.findByCode("EAST")
@@ -119,6 +174,32 @@ class CourseQueryApiTest {
         em.flush();
     }
 
+    @Test
+    void detailReadsCurrentWeatherByStoredDatesAndRegionWithoutChangingSchedule() throws Exception {
+        var evidence = new com.example.hangat.course.facts.DailyWeatherEvidence("KMA_SHORT", "EAST", "REGION",
+                "DAILY", 발표버전, new BigDecimal("20"), new BigDecimal("27"));
+        var fact = new com.example.hangat.course.facts.WeatherFact(1L, 출발일, null, null, 30,
+                "NONE", "흐림", null, null, evidence);
+        var set = new com.example.hangat.course.facts.WeatherFactSet("east", "KMA", 57, 37,
+                출발일, java.time.LocalTime.MIDNIGHT, List.of(fact));
+        org.mockito.Mockito.when(weatherProvider.loadDates(임시코스.getStartDate(), 임시코스.getEndDate(), java.util.Set.of("EAST")))
+                .thenReturn(new com.example.hangat.course.weather.CourseWeatherFacts(java.util.Map.of(), List.of(set)));
+        mockMvc.perform(get("/courses/{id}", 임시코스.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result.days[0].items[0].weather[0].precipitation_probability").value(30))
+                .andExpect(jsonPath("$.result.days[0].items[0].weather[0].daily_evidence.region_code").value("EAST"))
+                .andExpect(jsonPath("$.result.days[1].items[0].weather").isEmpty());
+        var before = queryService.detail(임시코스.getId(), null);
+        org.mockito.Mockito.when(weatherProvider.loadDates(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anySet()))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("unavailable"));
+        var after = queryService.detail(임시코스.getId(), null);
+        assertThat(after.days().get(0).items().get(0).weather()).isEmpty();
+        assertThat(after.days().get(0).items().get(0).id()).isEqualTo(before.days().get(0).items().get(0).id());
+        assertThat(after.days().get(0).items().get(0).startTime()).isEqualTo(before.days().get(0).items().get(0).startTime());
+        assertThat(after.accommodation()).isEqualTo(before.accommodation());
+        mockMvc.perform(get("/courses/{id}", 임시코스.getId())).andExpect(status().isOk());
+    }
+
     private User 회원가입(String email) {
         User user = User.signUpWithEmail(email, "bcrypt-해시-자리", "조회테스터-" + email.charAt(0));
         em.persist(user);
@@ -143,6 +224,7 @@ class CourseQueryApiTest {
     private Course course(User owner, String title) {
         return courseRepository.save(Course.builder()
                 .user(owner).title(title)
+                .people((short) 2)
                 .startDate(출발일).endDate(출발일.plusDays(1))
                 .transport(Transport.RENTAL_CAR)
                 .averageCongestionRate(new BigDecimal("33.00"))
@@ -180,7 +262,7 @@ class CourseQueryApiTest {
         CourseDetailResponse.ItemDto 성산 = detail.days().get(0).items().get(0);
         assertThat(성산.placeName()).isEqualTo("성산일출봉");
         assertThat(성산.congestionRate()).isEqualTo(35.0);          // 지금 예보
-        assertThat(성산.congestionLabel()).isEqualTo("여유");
+        assertThat(성산.congestionLabel()).isEqualTo("한산");
         assertThat(성산.plannedCongestionRate()).isEqualTo(80.0);   // 저장 시점 스냅숏
         assertThat(성산.regionName()).isEqualTo("동부");
         assertThat(성산.latitude()).isNotNull();
@@ -251,7 +333,7 @@ class CourseQueryApiTest {
         assertThat(card.regionName()).isEqualTo("동부");
         assertThat(card.durationText()).isEqualTo("1박 2일");
         assertThat(card.savedAt()).isNotNull();
-        assertThat(card.congestionLabel()).isEqualTo("여유");
+        assertThat(card.congestionLabel()).isEqualTo("한산");
 
         // 임시 코스(미저장)와 남의 목록에는 안 잡힌다
         assertThat(mine).noneMatch(c -> c.id().equals(임시코스.getId()));
@@ -342,7 +424,7 @@ class CourseQueryApiTest {
 
         // 지금 예보 (35 + 23 + 41) / 3 = 33.00, 저장된 캐시는 생성 당시 값 33.00
         assertThat(detail.averageCongestionRate()).isEqualByComparingTo("33.00");
-        assertThat(detail.congestionLabel()).isEqualTo("여유");
+        assertThat(detail.congestionLabel()).isEqualTo("한산");
         assertThat(detail.plannedAverageCongestionRate()).isEqualByComparingTo("33.00");
         // 임시 코스는 스왑은 되지만 이름변경·삭제 대상이 아니다
         assertThat(detail.swappable()).isTrue();

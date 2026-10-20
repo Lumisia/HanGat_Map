@@ -57,7 +57,8 @@ final class CourseCandidateNormalizer {
                     || candidate.getPreferenceType() == PreferenceType.AVOID) {
                 continue;
             }
-            CourseCandidate normalizedCandidate = normalizeKtoCandidate(request, candidate);
+            CourseCandidate normalizedCandidate = candidate.getStoredCandidate() == null
+                    ? normalizeKtoCandidate(request, candidate) : candidate.getStoredCandidate();
             String candidateId = normalizedCandidate.identity().candidateId();
             if (!candidateIds.add(candidateId)) {
                 throw new IllegalArgumentException("중복된 AI 후보 식별자입니다: " + candidateId);
@@ -75,7 +76,7 @@ final class CourseCandidateNormalizer {
                 int matchedIndex = findMatchingCandidateIndex(preference, normalized);
                 if (matchedIndex >= 0) {
                     CourseCandidate matched = normalized.get(matchedIndex);
-                    if (isKakaoPreference(preference)) {
+                    if (isKakaoPreference(preference) && matched.identity().placeId() == null) {
                         normalized.set(matchedIndex, normalizeKakaoWant(
                                 matched.identity().candidateId(), preference));
                     } else if (matched.userConstraint().preferenceType() != PreferenceType.WANT) {
@@ -191,7 +192,8 @@ final class CourseCandidateNormalizer {
 
     private InternalPlaceCategory ktoInternalCategory(TourPlaceDto place) {
         String code;
-        if ("A05020900".equals(place.getCategory3())) {
+        if ("A05020900".equals(place.getCategory3())
+                || StoredPlaceStyleResolver.resolve(place.getClassificationCode()).contains("CAFE")) {
             code = "CAFE";
         } else if ("A05".equals(place.getCategory())) {
             code = "FOOD";
@@ -237,7 +239,9 @@ final class CourseCandidateNormalizer {
                 continue;
             }
             String normalizedCode = styleCode.trim().toUpperCase(Locale.ROOT);
-            if ("NATURE".equals(normalizedCode) && "A01".equals(place.getCategory())) {
+            if (StoredPlaceStyleResolver.resolve(place.getClassificationCode()).contains(normalizedCode)) {
+                result.add(new StyleHint(normalizedCode, "KTO_CLASSIFICATION", place.getClassificationCode()));
+            } else if ("NATURE".equals(normalizedCode) && "A01".equals(place.getCategory())) {
                 result.add(new StyleHint("NATURE", "KTO_CAT1", "A01"));
             } else if ("ACTIVITY".equals(normalizedCode) && "A03".equals(place.getCategory())) {
                 result.add(new StyleHint("ACTIVITY", "KTO_CAT1", "A03"));
@@ -294,8 +298,9 @@ final class CourseCandidateNormalizer {
         for (int index = 0; index < candidates.size(); index++) {
             CourseCandidate candidate = candidates.get(index);
             if (sameSourceIdentity(preference, candidate)
-                    || sameInternalIdentity(preference, candidate)
-                    || sameNameAndCoordinates(preference, candidate)) {
+                    || (candidate.identity().placeId() == null && (
+                    sameInternalIdentity(preference, candidate)
+                    || sameNameAndCoordinates(preference, candidate)))) {
                 return index;
             }
         }

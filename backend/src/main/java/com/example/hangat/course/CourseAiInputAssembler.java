@@ -163,7 +163,6 @@ public class CourseAiInputAssembler {
                 request.getStartDate(),
                 request.getEndDate(),
                 request.getPeople(),
-                request.getBudgetTotal(),
                 request.getTransport()
         );
     }
@@ -378,7 +377,7 @@ public class CourseAiInputAssembler {
                 fact.precipitationProbability(),
                 fact.precipitationTypeCode(),
                 fact.skyConditionCode(),
-                fact.windSpeed());
+                fact.windSpeed(), fact.dailyEvidence());
     }
 
     private CourseWeatherDto toLegacyWeatherFact(WeatherFact fact) {
